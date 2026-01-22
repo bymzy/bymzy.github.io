@@ -14,7 +14,7 @@
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            font-family: Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         }
 
         body {
@@ -32,13 +32,21 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            height: 80vh;
+            min-height: 80vh;
             gap: 20px;
             color: #666;
         }
 
-        #select-dir-btn {
-            padding: 12px 24px;
+        .button-group {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            width: 100%;
+            max-width: 300px;
+        }
+
+        #select-dir-btn, #upload-btn {
+            padding: 14px 24px;
             background-color: #2196f3;
             color: white;
             border: none;
@@ -46,6 +54,62 @@
             cursor: pointer;
             font-size: 16px;
             transition: background-color 0.2s;
+        }
+
+        #select-dir-btn:hover, #upload-btn:hover {
+            background-color: #1976d2;
+        }
+
+        #upload-area {
+            width: 100%;
+            max-width: 300px;
+            padding: 40px 20px;
+            border: 2px dashed #2196f3;
+            border-radius: 8px;
+            background-color: #e3f2fd;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        #upload-area:hover, #upload-area.dragover {
+            background-color: #bbdefb;
+            border-color: #1976d2;
+        }
+
+        #upload-area p {
+            margin: 0;
+            color: #2196f3;
+            font-size: 14px;
+        }
+
+        #file-input {
+            display: none;
+        }
+
+        #restart-btn {
+            padding: 8px 12px;
+            background-color: #f0f0f0;
+            color: #333;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            white-space: nowrap;
+        }
+
+        #restart-btn:hover {
+            background-color: #e0e0e0;
+        }
+
+        .device-info {
+            margin-top: 20px;
+            padding: 12px;
+            background-color: white;
+            border-radius: 8px;
+            font-size: 12px;
+            color: #999;
+            text-align: center;
         }
 
         #select-dir-btn:hover {
@@ -231,20 +295,33 @@
     </script>
 </head>
 <body>
-    <div id="header" style="display: none;">
-        <button id="back-nav-btn" style="display: none;">← 返回</button>
-        <div id="breadcrumb" style="flex: 1; margin-left: 10px; color: #666;"></div>
+    <div id="init-state">
+        <h1 style="font-size: 24px; margin-bottom: 10px;">📖 PDF阅读器</h1>
+        <p style="color: #999; font-size: 14px; margin-bottom: 30px;">支持多层文件夹和离线访问</p>
+        
+        <div class="button-group">
+            <button id="select-dir-btn">📁 选择目录（电脑）</button>
+            <button id="upload-btn">📤 上传PDF文件</button>
+        </div>
+
+        <div id="upload-area">
+            <p>📥 拖放PDF文件到此处</p>
+            <p style="margin-top: 8px; font-size: 12px;">或点击选择文件</p>
+        </div>
+
+        <div class="device-info">
+            <p id="device-type"></p>
+            <p id="storage-info"></p>
+        </div>
     </div>
 
-    <div id="init-state">
-        <button id="select-dir-btn">📁 选择目录</button>
-        <p style="margin-top: 20px; color: #999; font-size: 14px;">支持多层文件夹结构</p>
-    </div>
+    <input type="file" id="file-input" accept=".pdf" multiple>
 
     <div id="file-browser" class="hidden">
         <div id="browser-header">
             <button id="back-nav-btn2">← 返回</button>
             <div id="breadcrumb2"></div>
+            <button id="restart-btn" style="margin-left: auto;">⟲ 重新开始</button>
         </div>
         <div id="file-list"></div>
     </div>
@@ -256,6 +333,25 @@
     </div>
 
     <script>
+        // 检测设备类型
+        function detectDevice() {
+            const ua = navigator.userAgent;
+            let deviceType = '未知设备';
+            if (/iPad/.test(ua)) deviceType = '📱 iPad';
+            else if (/iPhone/.test(ua)) deviceType = '📱 iPhone';
+            else if (/Android/.test(ua)) deviceType = '📱 Android';
+            else if (/Mac/.test(ua)) deviceType = '🖥 Mac';
+            else if (/Windows/.test(ua)) deviceType = '🖥 Windows';
+            else if (/Linux/.test(ua)) deviceType = '🖥 Linux';
+            
+            document.getElementById('device-type').textContent = `设备: ${deviceType}`;
+            
+            const supportsFS = 'showDirectoryPicker' in window;
+            document.getElementById('storage-info').textContent = `支持文件系统API: ${supportsFS ? '✓' : '✗ (使用文件上传)'}`;
+        }
+
+        detectDevice();
+
         // 注册 Service Worker 用于离线访问
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('sw.js').catch(() => {});
@@ -277,6 +373,7 @@
                 let currentDirectoryHandle = null;
                 let currentPath = [];  // 路径栈：[{name, handle}, ...]
                 let currentItems = [];  // 当前目录的文件和文件夹
+                let uploadedFiles = {};  // 上传的文件存储
 
                 // DOM元素
                 const initState = document.getElementById('init-state');
@@ -286,12 +383,39 @@
                 const pdfPagesContainer = document.getElementById('pdf-pages');
                 const pageIndicator = document.getElementById('page-indicator');
                 const selectDirBtn = document.getElementById('select-dir-btn');
+                const uploadBtn = document.getElementById('upload-btn');
+                const uploadArea = document.getElementById('upload-area');
+                const fileInput = document.getElementById('file-input');
                 const backBtn = document.getElementById('back-btn');
                 const backNavBtn = document.getElementById('back-nav-btn2');
                 const breadcrumb = document.getElementById('breadcrumb2');
+                const restartBtn = document.getElementById('restart-btn');
 
-                // 选择根目录
+                // 重新开始按钮
+                restartBtn.addEventListener('click', () => {
+                    currentDirectoryHandle = null;
+                    currentPath = [];
+                    uploadedFiles = {};
+                    currentItems = [];
+                    currentFileKey = '';
+                    pdfDoc = null;
+                    currentPage = 1;
+                    totalPages = 0;
+                    pdfPagesContainer.innerHTML = '';
+                    
+                    fileBrowser.classList.add('hidden');
+                    pdfViewer.classList.add('hidden');
+                    initState.classList.remove('hidden');
+                    backBtn.style.display = 'none';
+                    fileInput.value = '';
+                });
+
+                // 选择根目录（支持电脑端）
                 selectDirBtn.addEventListener('click', async () => {
+                    if (!('showDirectoryPicker' in window)) {
+                        alert('您的浏览器不支持此功能，请使用"上传PDF文件"功能');
+                        return;
+                    }
                     try {
                         const handle = await window.showDirectoryPicker();
                         if (await handle.requestPermission({ mode: 'read' }) !== 'granted') {
@@ -301,6 +425,7 @@
 
                         currentDirectoryHandle = handle;
                         currentPath = [];
+                        uploadedFiles = {}; // 清空上传的文件
                         showFileBrowser();
                         await loadDirectoryContents(handle, []);
                     } catch (error) {
@@ -309,6 +434,71 @@
                         }
                     }
                 });
+
+                // 文件上传功能
+                uploadBtn.addEventListener('click', () => {
+                    fileInput.click();
+                });
+
+                uploadArea.addEventListener('click', () => {
+                    fileInput.click();
+                });
+
+                // 拖放上传
+                uploadArea.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    uploadArea.classList.add('dragover');
+                });
+
+                uploadArea.addEventListener('dragleave', () => {
+                    uploadArea.classList.remove('dragover');
+                });
+
+                uploadArea.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    uploadArea.classList.remove('dragover');
+                    handleFileUpload(e.dataTransfer.files);
+                });
+
+                fileInput.addEventListener('change', (e) => {
+                    handleFileUpload(e.target.files);
+                });
+
+                async function handleFileUpload(files) {
+                    uploadedFiles = {}; // 清空之前的上传文件
+                    
+                    for (const file of files) {
+                        if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
+                            const fileKey = getFileKey(file.name);
+                            uploadedFiles[fileKey] = {
+                                name: file.name,
+                                file: file,
+                                type: 'file'
+                            };
+                        }
+                    }
+
+                    if (Object.keys(uploadedFiles).length === 0) {
+                        alert('没有找到有效的PDF文件');
+                        return;
+                    }
+
+                    currentDirectoryHandle = null;
+                    currentPath = [];
+                    showFileBrowser();
+                    
+                    // 构建显示项目
+                    currentItems = Object.entries(uploadedFiles).map(([key, data]) => ({
+                        name: data.name,
+                        type: 'file',
+                        fileKey: key,
+                        file: data.file
+                    }));
+
+                    updateBreadcrumb([]);
+                    renderFileList(currentItems);
+                    alert(`已加载 ${Object.keys(uploadedFiles).length} 个PDF文件`);
+                }
 
                 // 返回按钮（导航）
                 backNavBtn.addEventListener('click', async () => {
@@ -336,6 +526,11 @@
                     pdfViewer.classList.add('hidden');
                     fileBrowser.classList.remove('hidden');
                     backBtn.style.display = 'none';
+                    
+                    // 重新渲染当前目录
+                    if (currentItems.length > 0) {
+                        renderFileList(currentItems);
+                    }
                 });
 
                 function showFileBrowser() {
@@ -393,7 +588,9 @@
                                 await loadDirectoryContents(item.handle, currentPath);
                             });
                         } else {
-                            const progress = getReadProgress(getFileKey(item.name));
+                            // 处理上传的文件或本地文件
+                            const fileKey = item.fileKey || getFileKey(item.name);
+                            const progress = getReadProgress(fileKey);
                             fileItem.innerHTML = `
                                 <div class="file-item-icon">📄</div>
                                 <div class="file-item-name" title="${item.name}">${item.name}</div>
@@ -404,7 +601,14 @@
                                     <div class="progress-text">${Math.round(progress)}%</div>
                                 </div>
                             `;
-                            fileItem.addEventListener('click', () => openPdf(item.handle, getFileKey(item.name)));
+                            fileItem.addEventListener('click', () => {
+                                // 如果是上传的文件，使用不同的处理方式
+                                if (item.file) {
+                                    openUploadedPdf(item.file, fileKey);
+                                } else {
+                                    openPdf(item.handle, fileKey);
+                                }
+                            });
                         }
                         fileList.appendChild(fileItem);
                     });
@@ -413,6 +617,33 @@
                 function getFileKey(fileName) {
                     const fullPath = [...currentPath.map(p => p.name), fileName].join('/');
                     return btoa(encodeURIComponent(fullPath)).replace(/=/g, '');
+                }
+
+                // 打开上传的PDF文件
+                async function openUploadedPdf(file, fileKey) {
+                    try {
+                        currentFileKey = fileKey;
+                        const arrayBuffer = await file.arrayBuffer();
+                        const loadingTask = pdfjsLib.getDocument({
+                            cMapPacked: true,
+                            data: new Uint8Array(arrayBuffer)
+                        });
+
+                        pdfDoc = await loadingTask.promise;
+                        totalPages = pdfDoc.numPages;
+                        const savedProgress = getReadProgress(fileKey);
+                        currentPage = Math.max(1, Math.min(Math.floor((savedProgress / 100) * totalPages), totalPages));
+
+                        fileBrowser.classList.add('hidden');
+                        pdfViewer.classList.remove('hidden');
+                        backBtn.style.display = 'block';
+
+                        await renderPages();
+                        updatePageInfo();
+                        initSwipe();
+                    } catch (error) {
+                        alert('打开PDF失败：' + error.message);
+                    }
                 }
 
                 async function openPdf(fileHandle, fileKey) {
