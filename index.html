@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#2196f3">
+    <meta name="description" content="本地PDF阅读器 - 支持多层目录结构">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/png" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%232196f3' width='192' height='192'/><text x='50%' y='50%' font-size='100' fill='white' text-anchor='middle' dy='.3em'>PDF</text></svg>">
+    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%232196f3' width='192' height='192'/><text x='50%' y='50%' font-size='100' fill='white' text-anchor='middle' dy='.3em'>PDF</text></svg>">
+    <title>PDF阅读器</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+        }
+
+        body {
+            min-height: 100vh;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        #init-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 80vh;
+            gap: 20px;
+            color: #666;
+        }
+
+        #select-dir-btn {
+            padding: 12px 24px;
+            background-color: #2196f3;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.2s;
+        }
+
+        #select-dir-btn:hover {
+            background-color: #1976d2;
+        }
+
+        #browser-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            background-color: white;
+            border-bottom: 1px solid #eee;
+            margin-bottom: 12px;
+        }
+
+        #back-nav-btn, #back-nav-btn2 {
+            padding: 8px 12px;
+            background-color: #f0f0f0;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            white-space: nowrap;
+        }
+
+        #back-nav-btn:hover, #back-nav-btn2:hover {
+            background-color: #e0e0e0;
+        }
+
+        #breadcrumb2 {
+            flex: 1;
+            font-size: 12px;
+            color: #999;
+            overflow-x: auto;
+        }
+
+        #file-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+            padding: 12px;
+        }
+
+        #pdf-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+            margin-top: 20px;
+        }
+
+        .file-item, .pdf-item {
+            background-color: white;
+            padding: 16px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            cursor: pointer;
+            transition: transform 0.2s;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .file-item:hover, .pdf-item:hover {
+            transform: translateY(-4px);
+        }
+
+        .file-item-icon, .pdf-item-icon {
+            font-size: 32px;
+            margin-bottom: 8px;
+        }
+
+        .file-item-name, .pdf-item-name {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .file-item-info {
+            font-size: 12px;
+            color: #999;
+            margin-top: auto;
+        }
+
+        .progress-container {
+            width: 100%;
+            margin-top: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .progress-bar-wrapper {
+            position: relative;
+            height: 6px;
+            background-color: #eee;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background-color: #2196f3;
+            border-radius: 3px;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+
+        .progress-text {
+            font-size: 12px;
+            color: #666;
+            text-align: right;
+        }
+
+        #pdf-viewer {
+            position: relative;
+            height: 80vh;
+            margin-top: 20px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 16px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        #pdf-pages {
+            display: flex;
+            height: calc(100% - 40px);
+            transition: transform 0.3s ease;
+        }
+
+        .pdf-page {
+            flex: 0 0 100%;
+            height: 100%;
+            overflow: auto;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .pdf-page canvas {
+            max-height: 100%;
+            box-shadow: 0 0 8px rgba(0,0,0,0.1);
+        }
+
+        #page-indicator {
+            position: absolute;
+            bottom: 8px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 4px 12px;
+            background-color: rgba(0,0,0,0.7);
+            color: white;
+            border-radius: 12px;
+            font-size: 14px;
+        }
+
+        #back-btn {
+            position: absolute;
+            top: 16px;
+            left: 16px;
+            padding: 8px 16px;
+            background-color: #2196f3;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            z-index: 100;
+        }
+
+        #back-btn:hover {
+            background-color: #1976d2;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.js";
+        const pdfOptions = {
+            cMapPacked: true
+        };
+    </script>
+</head>
+<body>
+    <div id="header" style="display: none;">
+        <button id="back-nav-btn" style="display: none;">← 返回</button>
+        <div id="breadcrumb" style="flex: 1; margin-left: 10px; color: #666;"></div>
+    </div>
+
+    <div id="init-state">
+        <button id="select-dir-btn">📁 选择目录</button>
+        <p style="margin-top: 20px; color: #999; font-size: 14px;">支持多层文件夹结构</p>
+    </div>
+
+    <div id="file-browser" class="hidden">
+        <div id="browser-header">
+            <button id="back-nav-btn2">← 返回</button>
+            <div id="breadcrumb2"></div>
+        </div>
+        <div id="file-list"></div>
+    </div>
+
+    <div id="pdf-viewer" class="hidden">
+        <button id="back-btn" style="display: none;">← 返回列表</button>
+        <div id="pdf-pages"></div>
+        <div id="page-indicator">1 / 1</div>
+    </div>
+
+    <script>
+        // 注册 Service Worker 用于离线访问
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js').catch(() => {});
+        }
+
+        if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+            document.addEventListener('DOMContentLoaded', async () => {
+                if (typeof pdfjsLib === 'undefined') {
+                    alert('PDF.js加载失败，请检查网络或更换CDN路径！');
+                    return;
+                }
+
+                // 全局变量
+                let pdfDoc = null;
+                let currentPage = 1;
+                let totalPages = 0;
+                let startX = 0;
+                let currentFileKey = '';
+                let currentDirectoryHandle = null;
+                let currentPath = [];  // 路径栈：[{name, handle}, ...]
+                let currentItems = [];  // 当前目录的文件和文件夹
+
+                // DOM元素
+                const initState = document.getElementById('init-state');
+                const fileBrowser = document.getElementById('file-browser');
+                const fileList = document.getElementById('file-list');
+                const pdfViewer = document.getElementById('pdf-viewer');
+                const pdfPagesContainer = document.getElementById('pdf-pages');
+                const pageIndicator = document.getElementById('page-indicator');
+                const selectDirBtn = document.getElementById('select-dir-btn');
+                const backBtn = document.getElementById('back-btn');
+                const backNavBtn = document.getElementById('back-nav-btn2');
+                const breadcrumb = document.getElementById('breadcrumb2');
+
+                // 选择根目录
+                selectDirBtn.addEventListener('click', async () => {
+                    try {
+                        const handle = await window.showDirectoryPicker();
+                        if (await handle.requestPermission({ mode: 'read' }) !== 'granted') {
+                            alert('您需要授予目录读取权限！');
+                            return;
+                        }
+
+                        currentDirectoryHandle = handle;
+                        currentPath = [];
+                        showFileBrowser();
+                        await loadDirectoryContents(handle, []);
+                    } catch (error) {
+                        if (error.name !== 'AbortError') {
+                            alert('选择目录失败：' + error.message);
+                        }
+                    }
+                });
+
+                // 返回按钮（导航）
+                backNavBtn.addEventListener('click', async () => {
+                    if (currentPath.length > 0) {
+                        currentPath.pop();
+                        let handle = currentDirectoryHandle;
+                        for (const item of currentPath) {
+                            handle = item.handle;
+                        }
+                        await loadDirectoryContents(handle, currentPath);
+                    }
+                });
+
+                // 返回按钮（PDF阅读器）
+                backBtn.addEventListener('click', () => {
+                    if (pdfDoc && currentFileKey) {
+                        const progress = (currentPage / totalPages) * 100;
+                        saveReadProgress(currentFileKey, progress);
+                    }
+                    pdfDoc = null;
+                    currentPage = 1;
+                    totalPages = 0;
+                    currentFileKey = '';
+                    pdfPagesContainer.innerHTML = '';
+                    pdfViewer.classList.add('hidden');
+                    fileBrowser.classList.remove('hidden');
+                    backBtn.style.display = 'none';
+                });
+
+                function showFileBrowser() {
+                    initState.classList.add('hidden');
+                    fileBrowser.classList.remove('hidden');
+                }
+
+                async function loadDirectoryContents(directoryHandle, pathStack) {
+                    currentItems = [];
+                    const items = { folders: [], files: [] };
+
+                    try {
+                        for await (const [name, handle] of directoryHandle.entries()) {
+                            if (handle.kind === 'directory') {
+                                items.folders.push({ name, handle, type: 'folder' });
+                            } else if (name.toLowerCase().endsWith('.pdf')) {
+                                items.files.push({ name, handle, type: 'file' });
+                            }
+                        }
+                    } catch (err) {
+                        console.warn('加载目录失败:', err.message);
+                    }
+
+                    // 按名称排序
+                    items.folders.sort((a, b) => a.name.localeCompare(b.name));
+                    items.files.sort((a, b) => a.name.localeCompare(b.name));
+                    currentItems = [...items.folders, ...items.files];
+
+                    updateBreadcrumb(pathStack);
+                    renderFileList(currentItems);
+                }
+
+                function updateBreadcrumb(pathStack) {
+                    let breadcrumbText = '根目录';
+                    if (pathStack.length > 0) {
+                        breadcrumbText = pathStack.map(p => p.name).join(' / ');
+                    }
+                    breadcrumb.textContent = breadcrumbText;
+                    backNavBtn.style.display = pathStack.length > 0 ? 'block' : 'none';
+                }
+
+                function renderFileList(items) {
+                    fileList.innerHTML = '';
+                    items.forEach(item => {
+                        const fileItem = document.createElement('div');
+                        fileItem.className = 'file-item';
+                        if (item.type === 'folder') {
+                            fileItem.innerHTML = `
+                                <div class="file-item-icon">📁</div>
+                                <div class="file-item-name" title="${item.name}">${item.name}</div>
+                                <div class="file-item-info">文件夹</div>
+                            `;
+                            fileItem.addEventListener('click', async () => {
+                                currentPath.push({ name: item.name, handle: item.handle });
+                                await loadDirectoryContents(item.handle, currentPath);
+                            });
+                        } else {
+                            const progress = getReadProgress(getFileKey(item.name));
+                            fileItem.innerHTML = `
+                                <div class="file-item-icon">📄</div>
+                                <div class="file-item-name" title="${item.name}">${item.name}</div>
+                                <div class="progress-container">
+                                    <div class="progress-bar-wrapper">
+                                        <div class="progress-bar" style="width: ${progress}%"></div>
+                                    </div>
+                                    <div class="progress-text">${Math.round(progress)}%</div>
+                                </div>
+                            `;
+                            fileItem.addEventListener('click', () => openPdf(item.handle, getFileKey(item.name)));
+                        }
+                        fileList.appendChild(fileItem);
+                    });
+                }
+
+                function getFileKey(fileName) {
+                    const fullPath = [...currentPath.map(p => p.name), fileName].join('/');
+                    return btoa(encodeURIComponent(fullPath)).replace(/=/g, '');
+                }
+
+                async function openPdf(fileHandle, fileKey) {
+                    try {
+                        currentFileKey = fileKey;
+                        const file = await fileHandle.getFile();
+                        const arrayBuffer = await file.arrayBuffer();
+                        const loadingTask = pdfjsLib.getDocument({
+                            cMapPacked: true,
+                            data: new Uint8Array(arrayBuffer)
+                        });
+
+                        pdfDoc = await loadingTask.promise;
+                        totalPages = pdfDoc.numPages;
+                        const savedProgress = getReadProgress(fileKey);
+                        currentPage = Math.max(1, Math.min(Math.floor((savedProgress / 100) * totalPages), totalPages));
+
+                        fileBrowser.classList.add('hidden');
+                        pdfViewer.classList.remove('hidden');
+                        backBtn.style.display = 'block';
+
+                        await renderPages();
+                        updatePageInfo();
+                        initSwipe();
+                    } catch (error) {
+                        alert('打开PDF失败：' + error.message);
+                    }
+                }
+
+                async function renderPages() {
+                    pdfPagesContainer.innerHTML = '';
+                    for (let i = 1; i <= totalPages; i++) {
+                        const page = await pdfDoc.getPage(i);
+                        const viewport = page.getViewport({
+                            scale: window.innerWidth / page.getViewport({ scale: 1 }).width * 0.9
+                        });
+
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
+                        canvas.height = viewport.height;
+                        canvas.width = viewport.width;
+
+                        await page.render({ canvasContext: ctx, viewport }).promise;
+
+                        const pageDiv = document.createElement('div');
+                        pageDiv.className = 'pdf-page';
+                        pageDiv.appendChild(canvas);
+                        pdfPagesContainer.appendChild(pageDiv);
+                    }
+                    setPagePosition();
+                }
+
+                function updatePageInfo() {
+                    pageIndicator.textContent = `${currentPage} / ${totalPages}`;
+                    if (currentFileKey) {
+                        const progress = (currentPage / totalPages) * 100;
+                        saveReadProgress(currentFileKey, progress);
+                    }
+                }
+
+                function setPagePosition() {
+                    const offset = -(currentPage - 1) * 100;
+                    pdfPagesContainer.style.transform = `translateX(${offset}%)`;
+                }
+
+                function initSwipe() {
+                    pdfPagesContainer.addEventListener('touchstart', (e) => {
+                        startX = e.touches[0].clientX;
+                    });
+                    pdfPagesContainer.addEventListener('touchend', (e) => {
+                        const deltaX = startX - e.changedTouches[0].clientX;
+                        handleSwipe(deltaX);
+                    });
+
+                    let isDragging = false;
+                    pdfPagesContainer.addEventListener('mousedown', (e) => {
+                        isDragging = true;
+                        startX = e.clientX;
+                    });
+                    pdfPagesContainer.addEventListener('mouseup', (e) => {
+                        if (isDragging) {
+                            isDragging = false;
+                            const deltaX = startX - e.clientX;
+                            handleSwipe(deltaX);
+                        }
+                    });
+                }
+
+                function handleSwipe(deltaX) {
+                    const threshold = 50;
+                    if (Math.abs(deltaX) < threshold) return;
+                    if (deltaX > 0 && currentPage < totalPages) {
+                        currentPage++;
+                    } else if (deltaX < 0 && currentPage > 1) {
+                        currentPage--;
+                    }
+                    setPagePosition();
+                    updatePageInfo();
+                }
+
+                function saveReadProgress(fileKey, progress) {
+                    const progressData = JSON.parse(localStorage.getItem('pdfReadProgress') || '{}');
+                    progressData[fileKey] = progress;
+                    localStorage.setItem('pdfReadProgress', JSON.stringify(progressData));
+                }
+
+                function getReadProgress(fileKey) {
+                    const progressData = JSON.parse(localStorage.getItem('pdfReadProgress') || '{}');
+                    return progressData[fileKey] || 0;
+                }
+            });
+        }
+    </script>
+</body>
+</html>
