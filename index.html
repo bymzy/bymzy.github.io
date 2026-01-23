@@ -1,760 +1,1104 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <meta name="theme-color" content="#2196f3">
-    <meta name="description" content="本地PDF阅读器 - 支持多层目录结构">
-    <link rel="manifest" href="manifest.json">
-    <link rel="icon" type="image/png" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%232196f3' width='192' height='192'/><text x='50%' y='50%' font-size='100' fill='white' text-anchor='middle' dy='.3em'>PDF</text></svg>">
-    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%232196f3' width='192' height='192'/><text x='50%' y='50%' font-size='100' fill='white' text-anchor='middle' dy='.3em'>PDF</text></svg>">
-    <title>PDF阅读器</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>本地文件管理器</title>
+        <meta name="description" content="一个可以阅读PDF和EPUB文档的PWA应用">
+        <meta name="theme-color" content="#4096ff">
+        <link rel="manifest" href="/manifest.json">
+        <link rel="icon" href="https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=file%20reader%20app%20icon%20with%20document%20symbol%2C%20minimal%20design%2C%20blue%20color&image_size=square" type="image/png">
+        <link rel="apple-touch-icon" href="https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=file%20reader%20app%20icon%20with%20document%20symbol%2C%20minimal%20design%2C%20blue%20color&image_size=square">
+        <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+        <script src="epub.min.js"></script>
+        <script>
+            // 注册Service Worker
+            if ('serviceWorker' in navigator) {
+                window.addEventListener('load', () => {
+                    navigator.serviceWorker.register('/service-worker.js')
+                        .then(registration => {
+                            console.log('ServiceWorker 注册成功:', registration.scope);
+                        })
+                        .catch(error => {
+                            console.log('ServiceWorker 注册失败:', error);
+                        });
+                });
+            }
+        </script>
     <style>
+        /* 保留原有所有样式，此处省略（样式无问题） */
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
 
         body {
-            min-height: 100vh;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background-color: #f5f7fa;
+            overflow: hidden;
+        }
+
+        .navbar {
+            height: 60px;
+            background-color: #fff;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            gap: 20px;
+            position: relative;
+            z-index: 100;
+        }
+
+        .nav-tabs {
+            display: flex;
+            gap: 2px;
+        }
+
+        .nav-tab {
+            padding: 8px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 15px;
+            font-weight: 500;
+            color: #606266;
+        }
+
+        .nav-tab.active {
+            background-color: #4096ff;
+            color: #fff;
+        }
+
+        .nav-actions {
+            margin-left: auto;
+            display: flex;
+            gap: 15px;
+        }
+
+        .action-btn {
+            padding: 8px 16px;
+            background-color: #f0f2f5;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            color: #303133;
+            font-size: 14px;
+        }
+
+        .action-btn:hover {
+            background-color: #e5e6eb;
+        }
+
+        .action-btn.primary {
+            background-color: #4096ff;
+            color: #fff;
+        }
+
+        .action-btn.primary:hover {
+            background-color: #3088ff;
+        }
+
+        .breadcrumb {
+            height: 40px;
+            background-color: #fff;
+            padding: 0 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border-bottom: 1px solid #e5e6eb;
+        }
+
+        .breadcrumb-item {
+            cursor: pointer;
+            color: #4096ff;
+            font-size: 14px;
+        }
+
+        .breadcrumb-sep {
+            color: #909399;
+            font-size: 12px;
+        }
+
+        .breadcrumb-item.root {
+            color: #303133;
+            font-weight: 500;
+        }
+
+        .content-wrapper {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        .sidebar {
+            width: 260px;
+            background-color: #fff;
+            border-right: 1px solid #e5e6eb;
+            overflow-y: auto;
+            padding: 10px 0;
+        }
+
+        .dir-tree-item {
+            padding: 8px 20px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #303133;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: background-color 0.2s ease;
+        }
+
+        .dir-tree-item:hover {
+            background-color: #f5f7fa;
+        }
+
+        .dir-tree-item.active {
+            background-color: #e8f3ff;
+            color: #4096ff;
+            font-weight: 500;
+        }
+
+        .dir-icon {
+            font-size: 16px;
+        }
+
+        .content-area {
+            flex: 1;
             padding: 20px;
-            background-color: #f5f5f5;
+            overflow-y: auto;
         }
 
-        .hidden {
-            display: none !important;
-        }
-
-        #init-state {
+        .empty-state {
+            height: 100%;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            min-height: 80vh;
-            gap: 20px;
-            color: #666;
+            color: #909399;
+            gap: 15px;
         }
 
-        .button-group {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            width: 100%;
-            max-width: 300px;
+        .empty-icon {
+            font-size: 64px;
+            opacity: 0.5;
         }
 
-        #select-dir-btn, #upload-btn {
-            padding: 14px 24px;
-            background-color: #2196f3;
-            color: white;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
+        .empty-text {
             font-size: 16px;
-            transition: background-color 0.2s;
         }
 
-        #select-dir-btn:hover, #upload-btn:hover {
-            background-color: #1976d2;
+        .file-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 20px;
         }
 
-        #upload-area {
+        .file-card, .dir-card {
+            background-color: #fff;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            transition: all 0.3s ease;
+            cursor: pointer;
+            position: relative;
+        }
+
+        .file-card:hover, .dir-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.12);
+        }
+
+        .card-thumbnail {
             width: 100%;
-            max-width: 300px;
-            padding: 40px 20px;
-            border: 2px dashed #2196f3;
-            border-radius: 8px;
-            background-color: #e3f2fd;
-            text-align: center;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        #upload-area:hover, #upload-area.dragover {
-            background-color: #bbdefb;
-            border-color: #1976d2;
-        }
-
-        #upload-area p {
-            margin: 0;
-            color: #2196f3;
-            font-size: 14px;
-        }
-
-        #file-input {
-            display: none;
-        }
-
-        #restart-btn {
-            padding: 8px 12px;
-            background-color: #f0f0f0;
-            color: #333;
-            border: 1px solid #ddd;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-            white-space: nowrap;
-        }
-
-        #restart-btn:hover {
-            background-color: #e0e0e0;
-        }
-
-        .device-info {
-            margin-top: 20px;
-            padding: 12px;
-            background-color: white;
-            border-radius: 8px;
-            font-size: 12px;
-            color: #999;
-            text-align: center;
-        }
-
-        #select-dir-btn:hover {
-            background-color: #1976d2;
-        }
-
-        #browser-header {
+            height: 180px;
+            background-color: #f8f9fa;
             display: flex;
             align-items: center;
-            gap: 12px;
-            padding: 12px;
-            background-color: white;
-            border-bottom: 1px solid #eee;
-            margin-bottom: 12px;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
         }
 
-        #back-nav-btn, #back-nav-btn2 {
-            padding: 8px 12px;
-            background-color: #f0f0f0;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
+        .dir-card .card-thumbnail {
+            background-color: #e8f3ff;
+        }
+
+        .thumbnail-img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .file-icon, .dir-icon-card {
+            font-size: 48px;
+            color: #909399;
+        }
+
+        .dir-icon-card {
+            color: #4096ff;
+        }
+
+        .card-info {
+            padding: 15px;
+        }
+
+        .file-name, .dir-name {
             font-size: 14px;
+            color: #303133;
             white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-bottom: 5px;
         }
 
-        #back-nav-btn:hover, #back-nav-btn2:hover {
-            background-color: #e0e0e0;
-        }
-
-        #breadcrumb2 {
-            flex: 1;
+        .file-type, .dir-count {
             font-size: 12px;
-            color: #999;
-            overflow-x: auto;
+            color: #909399;
         }
 
-        #file-list {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 16px;
-            padding: 12px;
-        }
-
-        #pdf-list {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 16px;
-            margin-top: 20px;
-        }
-
-        .file-item, .pdf-item {
-            background-color: white;
-            padding: 16px;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-            cursor: pointer;
-            transition: transform 0.2s;
+        .loading {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(255,255,255,0.8);
             display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+        }
+
+        .loading-spinner {
+            width: 30px;
+            height: 30px;
+            border: 3px solid #e5e6eb;
+            border-top-color: #4096ff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .mode-directory .import-mode,
+        .mode-import .directory-mode {
+            display: none !important;
+        }
+
+        /* 阅读视图样式 */
+        .reader-view {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #fff;
+            z-index: 1000;
+            display: none;
             flex-direction: column;
         }
 
-        .file-item:hover, .pdf-item:hover {
-            transform: translateY(-4px);
+        .reader-header {
+            height: 60px;
+            background-color: #fff;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            gap: 20px;
+            position: relative;
+            z-index: 10;
         }
 
-        .file-item-icon, .pdf-item-icon {
-            font-size: 32px;
-            margin-bottom: 8px;
+        .reader-back-btn {
+            padding: 8px 16px;
+            background-color: #f0f2f5;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            color: #303133;
+            font-size: 14px;
         }
 
-        .file-item-name, .pdf-item-name {
-            font-weight: 600;
-            color: #333;
-            margin-bottom: 8px;
+        .reader-back-btn:hover {
+            background-color: #e5e6eb;
+        }
+
+        .reader-title {
+            flex: 1;
+            font-size: 16px;
+            font-weight: 500;
+            color: #303133;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
         }
 
-        .file-item-info {
-            font-size: 12px;
-            color: #999;
-            margin-top: auto;
+        .reader-content {
+            flex: 1;
+            overflow: hidden;
+            position: relative;
         }
 
-        .progress-container {
+        #pdf-container {
             width: 100%;
-            margin-top: auto;
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-        }
-
-        .progress-bar-wrapper {
-            position: relative;
-            height: 6px;
-            background-color: #eee;
-            border-radius: 3px;
-            overflow: hidden;
-        }
-
-        .progress-bar {
             height: 100%;
-            background-color: #2196f3;
-            border-radius: 3px;
-            transition: width 0.3s ease;
-            width: 0%;
+            overflow: auto;
         }
 
-        .progress-text {
-            font-size: 12px;
-            color: #666;
-            text-align: right;
-        }
-
-        #pdf-viewer {
-            position: relative;
-            height: 80vh;
-            margin-top: 20px;
-            background-color: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 16px rgba(0,0,0,0.1);
-            overflow: hidden;
-        }
-
-        #pdf-pages {
-            display: flex;
-            height: calc(100% - 40px);
-            transition: transform 0.3s ease;
+        #epub-container {
+            width: 100%;
+            height: 100%;
+            overflow: auto;
         }
 
         .pdf-page {
-            flex: 0 0 100%;
+            margin: 20px auto;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .epub-view {
+            width: 100%;
             height: 100%;
-            overflow: auto;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-
-        .pdf-page canvas {
-            max-height: 100%;
-            box-shadow: 0 0 8px rgba(0,0,0,0.1);
-        }
-
-        #page-indicator {
-            position: absolute;
-            bottom: 8px;
-            left: 50%;
-            transform: translateX(-50%);
-            padding: 4px 12px;
-            background-color: rgba(0,0,0,0.7);
-            color: white;
-            border-radius: 12px;
-            font-size: 14px;
-        }
-
-        #back-btn {
-            position: absolute;
-            top: 16px;
-            left: 16px;
-            padding: 8px 16px;
-            background-color: #2196f3;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-            z-index: 100;
-        }
-
-        #back-btn:hover {
-            background-color: #1976d2;
         }
     </style>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
-    <script>
-        pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.js";
-        const pdfOptions = {
-            cMapPacked: true
-        };
-    </script>
 </head>
-<body>
-    <div id="init-state">
-        <h1 style="font-size: 24px; margin-bottom: 10px;">📖 PDF阅读器</h1>
-        <p style="color: #999; font-size: 14px; margin-bottom: 30px;">支持多层文件夹和离线访问</p>
-        
-        <div class="button-group">
-            <button id="select-dir-btn">📁 选择目录（电脑）</button>
-            <button id="upload-btn">📤 上传PDF文件</button>
+<body class="mode-directory">
+    <div class="navbar">
+        <div class="nav-tabs">
+            <div class="nav-tab active" data-mode="directory">本地目录</div>
+            <div class="nav-tab" data-mode="import">导入文件</div>
         </div>
-
-        <div id="upload-area">
-            <p>📥 拖放PDF文件到此处</p>
-            <p style="margin-top: 8px; font-size: 12px;">或点击选择文件</p>
-        </div>
-
-        <div class="device-info">
-            <p id="device-type"></p>
-            <p id="storage-info"></p>
+        <div class="nav-actions">
+            <button class="action-btn directory-mode" id="select-dir-btn">选择目录</button>
+            <button class="action-btn primary import-mode" id="import-file-btn">导入文件</button>
+            <button class="action-btn import-mode" id="clear-import-btn">清空导入</button>
         </div>
     </div>
 
-    <input type="file" id="file-input" accept=".pdf" multiple>
-
-    <div id="file-browser" class="hidden">
-        <div id="browser-header">
-            <button id="back-nav-btn2">← 返回</button>
-            <div id="breadcrumb2"></div>
-            <button id="restart-btn" style="margin-left: auto;">⟲ 重新开始</button>
-        </div>
-        <div id="file-list"></div>
+    <div class="breadcrumb directory-mode" id="breadcrumb">
+        <div class="breadcrumb-item root" data-path="">根目录</div>
     </div>
 
-    <div id="pdf-viewer" class="hidden">
-        <button id="back-btn" style="display: none;">← 返回列表</button>
-        <div id="pdf-pages"></div>
-        <div id="page-indicator">1 / 1</div>
+    <div class="content-wrapper">
+        <div class="sidebar directory-mode" id="dir-tree"></div>
+
+        <div class="content-area">
+            <div class="empty-state" id="empty-state">
+                <div class="empty-icon">📂</div>
+                <div class="empty-text">暂无文件，请选择本地目录或导入文件</div>
+            </div>
+
+            <div class="file-grid" id="fileGrid"></div>
+        </div>
+    </div>
+
+    <!-- 阅读视图 -->
+    <div class="reader-view" id="readerView">
+        <div class="reader-header">
+            <button class="reader-back-btn" id="readerBackBtn">返回</button>
+            <div class="reader-title" id="readerTitle"></div>
+        </div>
+        <div class="reader-content">
+            <div id="pdf-container"></div>
+            <div id="epub-container"></div>
+        </div>
     </div>
 
     <script>
-        // 检测设备类型
-        function detectDevice() {
-            const ua = navigator.userAgent;
-            let deviceType = '未知设备';
-            if (/iPad/.test(ua)) deviceType = '📱 iPad';
-            else if (/iPhone/.test(ua)) deviceType = '📱 iPhone';
-            else if (/Android/.test(ua)) deviceType = '📱 Android';
-            else if (/Mac/.test(ua)) deviceType = '🖥 Mac';
-            else if (/Windows/.test(ua)) deviceType = '🖥 Windows';
-            else if (/Linux/.test(ua)) deviceType = '🖥 Linux';
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+
+        const state = {
+            currentMode: 'directory',
+            currentDirHandle: null,
+            currentDirPath: '',
+            dirTree: [],
+            importedFiles: JSON.parse(localStorage.getItem('importedFiles') || '[]'),
+            fileCache: new Map()
+        };
+
+        const elements = {
+            body: document.body,
+            navTabs: document.querySelectorAll('.nav-tab'),
+            selectDirBtn: document.getElementById('select-dir-btn'),
+            importFileBtn: document.getElementById('import-file-btn'),
+            clearImportBtn: document.getElementById('clear-import-btn'),
+            breadcrumb: document.getElementById('breadcrumb'),
+            dirTree: document.getElementById('dir-tree'),
+            emptyState: document.getElementById('empty-state'),
+            fileGrid: document.getElementById('fileGrid'),
+            fileInput: null,
+            // 阅读视图相关元素
+            readerView: document.getElementById('readerView'),
+            readerBackBtn: document.getElementById('readerBackBtn'),
+            readerTitle: document.getElementById('readerTitle'),
+            pdfContainer: document.getElementById('pdf-container'),
+            epubContainer: document.getElementById('epub-container')
+        };
+
+        init();
+
+        function init() {
+            createFileInput();
             
-            document.getElementById('device-type').textContent = `设备: ${deviceType}`;
+            elements.navTabs.forEach(tab => {
+                tab.addEventListener('click', switchMode);
+            });
+
+            elements.selectDirBtn.addEventListener('click', selectDirectory);
             
-            const supportsFS = 'showDirectoryPicker' in window;
-            document.getElementById('storage-info').textContent = `支持文件系统API: ${supportsFS ? '✓' : '✗ (使用文件上传)'}`;
+            elements.importFileBtn.addEventListener('click', () => {
+                elements.fileInput.click();
+            });
+
+            elements.clearImportBtn.addEventListener('click', clearImportedFiles);
+
+            elements.fileInput.addEventListener('change', handleFileImport);
+
+            // 阅读视图返回按钮事件
+            elements.readerBackBtn.addEventListener('click', () => {
+                // 移除键盘事件监听器
+                if (state.keyPressHandler) {
+                    document.removeEventListener('keydown', state.keyPressHandler);
+                    state.keyPressHandler = null;
+                    console.log('键盘事件监听器移除成功');
+                }
+                
+                // 清理当前渲染实例
+                if (state.currentRendition) {
+                    state.currentRendition = null;
+                }
+                
+                // 隐藏阅读视图并清理内容
+                elements.readerView.style.display = 'none';
+                elements.pdfContainer.innerHTML = '';
+                elements.epubContainer.innerHTML = '';
+            });
+
+            if (state.importedFiles.length > 0) {
+                renderImportedFiles();
+            }
         }
 
-        detectDevice();
+        function switchMode(e) {
+            const mode = e.target.dataset.mode;
+            if (mode === state.currentMode) return;
 
-        // 注册 Service Worker 用于离线访问
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('sw.js').catch(() => {});
+            elements.navTabs.forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.mode === mode);
+            });
+
+            elements.body.classList.remove('mode-directory', 'mode-import');
+            elements.body.classList.add(`mode-${mode}`);
+
+            state.currentMode = mode;
+
+            if (mode === 'directory') {
+                if (state.currentDirHandle) {
+                    renderDirectoryContent(state.currentDirHandle, state.currentDirPath);
+                } else {
+                    showEmptyState();
+                }
+            } else if (mode === 'import') {
+                renderImportedFiles();
+            }
         }
 
-        if (typeof window !== 'undefined' && typeof document !== 'undefined') {
-            document.addEventListener('DOMContentLoaded', async () => {
-                if (typeof pdfjsLib === 'undefined') {
-                    alert('PDF.js加载失败，请检查网络或更换CDN路径！');
-                    return;
+        async function selectDirectory() {
+            try {
+                const dirHandle = await window.showDirectoryPicker();
+                state.currentDirHandle = dirHandle;
+                state.currentDirPath = '';
+                
+                state.dirTree = []; // 重置目录树
+                await buildDirTree(dirHandle, '');
+                
+                renderDirTree();
+                renderBreadcrumb('');
+                await renderDirectoryContent(dirHandle, '');
+            } catch (err) {
+                if (err.name !== 'AbortError') {
+                    alert(`选择目录失败：${err.message}`);
                 }
+            }
+        }
 
-                // 全局变量
-                let pdfDoc = null;
-                let currentPage = 1;
-                let totalPages = 0;
-                let startX = 0;
-                let currentFileKey = '';
-                let currentDirectoryHandle = null;
-                let currentPath = [];  // 路径栈：[{name, handle}, ...]
-                let currentItems = [];  // 当前目录的文件和文件夹
-                let uploadedFiles = {};  // 上传的文件存储
+        async function buildDirTree(dirHandle, path) {
+            state.dirTree.push({
+                handle: dirHandle,
+                path: path,
+                name: dirHandle.name || '根目录'
+            });
 
-                // DOM元素
-                const initState = document.getElementById('init-state');
-                const fileBrowser = document.getElementById('file-browser');
-                const fileList = document.getElementById('file-list');
-                const pdfViewer = document.getElementById('pdf-viewer');
-                const pdfPagesContainer = document.getElementById('pdf-pages');
-                const pageIndicator = document.getElementById('page-indicator');
-                const selectDirBtn = document.getElementById('select-dir-btn');
-                const uploadBtn = document.getElementById('upload-btn');
-                const uploadArea = document.getElementById('upload-area');
-                const fileInput = document.getElementById('file-input');
-                const backBtn = document.getElementById('back-btn');
-                const backNavBtn = document.getElementById('back-nav-btn2');
-                const breadcrumb = document.getElementById('breadcrumb2');
-                const restartBtn = document.getElementById('restart-btn');
-
-                // 重新开始按钮
-                restartBtn.addEventListener('click', () => {
-                    currentDirectoryHandle = null;
-                    currentPath = [];
-                    uploadedFiles = {};
-                    currentItems = [];
-                    currentFileKey = '';
-                    pdfDoc = null;
-                    currentPage = 1;
-                    totalPages = 0;
-                    pdfPagesContainer.innerHTML = '';
-                    
-                    fileBrowser.classList.add('hidden');
-                    pdfViewer.classList.add('hidden');
-                    initState.classList.remove('hidden');
-                    backBtn.style.display = 'none';
-                    fileInput.value = '';
-                });
-
-                // 选择根目录（支持电脑端）
-                selectDirBtn.addEventListener('click', async () => {
-                    if (!('showDirectoryPicker' in window)) {
-                        alert('您的浏览器不支持此功能，请使用"上传PDF文件"功能');
-                        return;
-                    }
-                    try {
-                        const handle = await window.showDirectoryPicker();
-                        if (await handle.requestPermission({ mode: 'read' }) !== 'granted') {
-                            alert('您需要授予目录读取权限！');
-                            return;
-                        }
-
-                        currentDirectoryHandle = handle;
-                        currentPath = [];
-                        uploadedFiles = {}; // 清空上传的文件
-                        showFileBrowser();
-                        await loadDirectoryContents(handle, []);
-                    } catch (error) {
-                        if (error.name !== 'AbortError') {
-                            alert('选择目录失败：' + error.message);
-                        }
-                    }
-                });
-
-                // 文件上传功能
-                uploadBtn.addEventListener('click', () => {
-                    fileInput.click();
-                });
-
-                uploadArea.addEventListener('click', () => {
-                    fileInput.click();
-                });
-
-                // 拖放上传
-                uploadArea.addEventListener('dragover', (e) => {
-                    e.preventDefault();
-                    uploadArea.classList.add('dragover');
-                });
-
-                uploadArea.addEventListener('dragleave', () => {
-                    uploadArea.classList.remove('dragover');
-                });
-
-                uploadArea.addEventListener('drop', (e) => {
-                    e.preventDefault();
-                    uploadArea.classList.remove('dragover');
-                    handleFileUpload(e.dataTransfer.files);
-                });
-
-                fileInput.addEventListener('change', (e) => {
-                    handleFileUpload(e.target.files);
-                });
-
-                async function handleFileUpload(files) {
-                    uploadedFiles = {}; // 清空之前的上传文件
-                    
-                    for (const file of files) {
-                        if (file.type === 'application/pdf' || file.name.endsWith('.pdf')) {
-                            const fileKey = getFileKey(file.name);
-                            uploadedFiles[fileKey] = {
-                                name: file.name,
-                                file: file,
-                                type: 'file'
-                            };
-                        }
-                    }
-
-                    if (Object.keys(uploadedFiles).length === 0) {
-                        alert('没有找到有效的PDF文件');
-                        return;
-                    }
-
-                    currentDirectoryHandle = null;
-                    currentPath = [];
-                    showFileBrowser();
-                    
-                    // 构建显示项目
-                    currentItems = Object.entries(uploadedFiles).map(([key, data]) => ({
-                        name: data.name,
-                        type: 'file',
-                        fileKey: key,
-                        file: data.file
-                    }));
-
-                    updateBreadcrumb([]);
-                    renderFileList(currentItems);
-                    alert(`已加载 ${Object.keys(uploadedFiles).length} 个PDF文件`);
+            for await (const [name, handle] of dirHandle.entries()) {
+                if (handle.kind === 'directory') {
+                    const subPath = path ? `${path}/${name}` : name;
+                    await buildDirTree(handle, subPath);
                 }
+            }
+        }
 
-                // 返回按钮（导航）
-                backNavBtn.addEventListener('click', async () => {
-                    if (currentPath.length > 0) {
-                        currentPath.pop();
-                        let handle = currentDirectoryHandle;
-                        for (const item of currentPath) {
-                            handle = item.handle;
-                        }
-                        await loadDirectoryContents(handle, currentPath);
-                    }
-                });
-
-                // 返回按钮（PDF阅读器）
-                backBtn.addEventListener('click', () => {
-                    if (pdfDoc && currentFileKey) {
-                        const progress = (currentPage / totalPages) * 100;
-                        saveReadProgress(currentFileKey, progress);
-                    }
-                    pdfDoc = null;
-                    currentPage = 1;
-                    totalPages = 0;
-                    currentFileKey = '';
-                    pdfPagesContainer.innerHTML = '';
-                    pdfViewer.classList.add('hidden');
-                    fileBrowser.classList.remove('hidden');
-                    backBtn.style.display = 'none';
-                    
-                    // 重新渲染当前目录
-                    if (currentItems.length > 0) {
-                        renderFileList(currentItems);
-                    }
-                });
-
-                function showFileBrowser() {
-                    initState.classList.add('hidden');
-                    fileBrowser.classList.remove('hidden');
-                }
-
-                async function loadDirectoryContents(directoryHandle, pathStack) {
-                    currentItems = [];
-                    const items = { folders: [], files: [] };
-
-                    try {
-                        for await (const [name, handle] of directoryHandle.entries()) {
-                            if (handle.kind === 'directory') {
-                                items.folders.push({ name, handle, type: 'folder' });
-                            } else if (name.toLowerCase().endsWith('.pdf')) {
-                                items.files.push({ name, handle, type: 'file' });
-                            }
-                        }
-                    } catch (err) {
-                        console.warn('加载目录失败:', err.message);
-                    }
-
-                    // 按名称排序
-                    items.folders.sort((a, b) => a.name.localeCompare(b.name));
-                    items.files.sort((a, b) => a.name.localeCompare(b.name));
-                    currentItems = [...items.folders, ...items.files];
-
-                    updateBreadcrumb(pathStack);
-                    renderFileList(currentItems);
-                }
-
-                function updateBreadcrumb(pathStack) {
-                    let breadcrumbText = '根目录';
-                    if (pathStack.length > 0) {
-                        breadcrumbText = pathStack.map(p => p.name).join(' / ');
-                    }
-                    breadcrumb.textContent = breadcrumbText;
-                    backNavBtn.style.display = pathStack.length > 0 ? 'block' : 'none';
-                }
-
-                function renderFileList(items) {
-                    fileList.innerHTML = '';
-                    items.forEach(item => {
-                        const fileItem = document.createElement('div');
-                        fileItem.className = 'file-item';
-                        if (item.type === 'folder') {
-                            fileItem.innerHTML = `
-                                <div class="file-item-icon">📁</div>
-                                <div class="file-item-name" title="${item.name}">${item.name}</div>
-                                <div class="file-item-info">文件夹</div>
-                            `;
-                            fileItem.addEventListener('click', async () => {
-                                currentPath.push({ name: item.name, handle: item.handle });
-                                await loadDirectoryContents(item.handle, currentPath);
-                            });
-                        } else {
-                            // 处理上传的文件或本地文件
-                            const fileKey = item.fileKey || getFileKey(item.name);
-                            const progress = getReadProgress(fileKey);
-                            fileItem.innerHTML = `
-                                <div class="file-item-icon">📄</div>
-                                <div class="file-item-name" title="${item.name}">${item.name}</div>
-                                <div class="progress-container">
-                                    <div class="progress-bar-wrapper">
-                                        <div class="progress-bar" style="width: ${progress}%"></div>
-                                    </div>
-                                    <div class="progress-text">${Math.round(progress)}%</div>
-                                </div>
-                            `;
-                            fileItem.addEventListener('click', () => {
-                                // 如果是上传的文件，使用不同的处理方式
-                                if (item.file) {
-                                    openUploadedPdf(item.file, fileKey);
-                                } else {
-                                    openPdf(item.handle, fileKey);
-                                }
-                            });
-                        }
-                        fileList.appendChild(fileItem);
-                    });
-                }
-
-                function getFileKey(fileName) {
-                    const fullPath = [...currentPath.map(p => p.name), fileName].join('/');
-                    return btoa(encodeURIComponent(fullPath)).replace(/=/g, '');
-                }
-
-                // 打开上传的PDF文件
-                async function openUploadedPdf(file, fileKey) {
-                    try {
-                        currentFileKey = fileKey;
-                        const arrayBuffer = await file.arrayBuffer();
-                        const loadingTask = pdfjsLib.getDocument({
-                            cMapPacked: true,
-                            data: new Uint8Array(arrayBuffer)
+        function renderDirTree() {
+            elements.dirTree.innerHTML = '';
+            
+            state.dirTree.forEach(dir => {
+                const treeItem = document.createElement('div');
+                treeItem.className = `dir-tree-item ${dir.path === state.currentDirPath ? 'active' : ''}`;
+                treeItem.dataset.path = dir.path;
+                treeItem.innerHTML = `
+                    <span class="dir-icon">📁</span>
+                    <span>${dir.name}</span>
+                `;
+                
+                treeItem.addEventListener('click', async () => {
+                    const targetDir = state.dirTree.find(item => item.path === dir.path);
+                    if (targetDir) {
+                        state.currentDirPath = dir.path;
+                        state.currentDirHandle = targetDir.handle;
+                        
+                        elements.dirTree.querySelectorAll('.dir-tree-item').forEach(item => {
+                            item.classList.toggle('active', item.dataset.path === dir.path);
                         });
-
-                        pdfDoc = await loadingTask.promise;
-                        totalPages = pdfDoc.numPages;
-                        const savedProgress = getReadProgress(fileKey);
-                        currentPage = Math.max(1, Math.min(Math.floor((savedProgress / 100) * totalPages), totalPages));
-
-                        fileBrowser.classList.add('hidden');
-                        pdfViewer.classList.remove('hidden');
-                        backBtn.style.display = 'block';
-
-                        await renderPages();
-                        updatePageInfo();
-                        initSwipe();
-                    } catch (error) {
-                        alert('打开PDF失败：' + error.message);
+                        
+                        renderBreadcrumb(dir.path);
+                        await renderDirectoryContent(targetDir.handle, dir.path);
                     }
-                }
+                });
+                
+                elements.dirTree.appendChild(treeItem);
+            });
+        }
 
-                async function openPdf(fileHandle, fileKey) {
-                    try {
-                        currentFileKey = fileKey;
-                        const file = await fileHandle.getFile();
-                        const arrayBuffer = await file.arrayBuffer();
-                        const loadingTask = pdfjsLib.getDocument({
-                            cMapPacked: true,
-                            data: new Uint8Array(arrayBuffer)
-                        });
-
-                        pdfDoc = await loadingTask.promise;
-                        totalPages = pdfDoc.numPages;
-                        const savedProgress = getReadProgress(fileKey);
-                        currentPage = Math.max(1, Math.min(Math.floor((savedProgress / 100) * totalPages), totalPages));
-
-                        fileBrowser.classList.add('hidden');
-                        pdfViewer.classList.remove('hidden');
-                        backBtn.style.display = 'block';
-
-                        await renderPages();
-                        updatePageInfo();
-                        initSwipe();
-                    } catch (error) {
-                        alert('打开PDF失败：' + error.message);
-                    }
-                }
-
-                async function renderPages() {
-                    pdfPagesContainer.innerHTML = '';
-                    for (let i = 1; i <= totalPages; i++) {
-                        const page = await pdfDoc.getPage(i);
-                        const viewport = page.getViewport({
-                            scale: window.innerWidth / page.getViewport({ scale: 1 }).width * 0.9
-                        });
-
-                        const canvas = document.createElement('canvas');
-                        const ctx = canvas.getContext('2d');
-                        canvas.height = viewport.height;
-                        canvas.width = viewport.width;
-
-                        await page.render({ canvasContext: ctx, viewport }).promise;
-
-                        const pageDiv = document.createElement('div');
-                        pageDiv.className = 'pdf-page';
-                        pageDiv.appendChild(canvas);
-                        pdfPagesContainer.appendChild(pageDiv);
-                    }
-                    setPagePosition();
-                }
-
-                function updatePageInfo() {
-                    pageIndicator.textContent = `${currentPage} / ${totalPages}`;
-                    if (currentFileKey) {
-                        const progress = (currentPage / totalPages) * 100;
-                        saveReadProgress(currentFileKey, progress);
-                    }
-                }
-
-                function setPagePosition() {
-                    const offset = -(currentPage - 1) * 100;
-                    pdfPagesContainer.style.transform = `translateX(${offset}%)`;
-                }
-
-                function initSwipe() {
-                    pdfPagesContainer.addEventListener('touchstart', (e) => {
-                        startX = e.touches[0].clientX;
-                    });
-                    pdfPagesContainer.addEventListener('touchend', (e) => {
-                        const deltaX = startX - e.changedTouches[0].clientX;
-                        handleSwipe(deltaX);
-                    });
-
-                    let isDragging = false;
-                    pdfPagesContainer.addEventListener('mousedown', (e) => {
-                        isDragging = true;
-                        startX = e.clientX;
-                    });
-                    pdfPagesContainer.addEventListener('mouseup', (e) => {
-                        if (isDragging) {
-                            isDragging = false;
-                            const deltaX = startX - e.clientX;
-                            handleSwipe(deltaX);
-                        }
-                    });
-                }
-
-                function handleSwipe(deltaX) {
-                    const threshold = 50;
-                    if (Math.abs(deltaX) < threshold) return;
-                    if (deltaX > 0 && currentPage < totalPages) {
-                        currentPage++;
-                    } else if (deltaX < 0 && currentPage > 1) {
-                        currentPage--;
-                    }
-                    setPagePosition();
-                    updatePageInfo();
-                }
-
-                function saveReadProgress(fileKey, progress) {
-                    const progressData = JSON.parse(localStorage.getItem('pdfReadProgress') || '{}');
-                    progressData[fileKey] = progress;
-                    localStorage.setItem('pdfReadProgress', JSON.stringify(progressData));
-                }
-
-                function getReadProgress(fileKey) {
-                    const progressData = JSON.parse(localStorage.getItem('pdfReadProgress') || '{}');
-                    return progressData[fileKey] || 0;
+        function renderBreadcrumb(path) {
+            elements.breadcrumb.innerHTML = '';
+            
+            const rootItem = document.createElement('div');
+            rootItem.className = 'breadcrumb-item root';
+            rootItem.dataset.path = '';
+            rootItem.textContent = '根目录';
+            rootItem.addEventListener('click', async () => {
+                const rootDir = state.dirTree.find(item => item.path === '');
+                if (rootDir) {
+                    state.currentDirPath = '';
+                    state.currentDirHandle = rootDir.handle;
+                    renderBreadcrumb('');
+                    renderDirTree();
+                    await renderDirectoryContent(rootDir.handle, '');
                 }
             });
+            elements.breadcrumb.appendChild(rootItem);
+
+            if (!path) return;
+
+            const pathParts = path.split('/');
+            let currentPath = '';
+            
+            pathParts.forEach(part => {
+                if (!part) return;
+                
+                const sep = document.createElement('div');
+                sep.className = 'breadcrumb-sep';
+                sep.textContent = '/';
+                elements.breadcrumb.appendChild(sep);
+                
+                currentPath = currentPath ? `${currentPath}/${part}` : part;
+                
+                const dirItem = document.createElement('div');
+                dirItem.className = 'breadcrumb-item';
+                dirItem.dataset.path = currentPath;
+                dirItem.textContent = part;
+                dirItem.addEventListener('click', async () => {
+                    const targetDir = state.dirTree.find(item => item.path === currentPath);
+                    if (targetDir) {
+                        state.currentDirPath = currentPath;
+                        state.currentDirHandle = targetDir.handle;
+                        renderDirTree();
+                        await renderDirectoryContent(targetDir.handle, currentPath);
+                    }
+                });
+                elements.breadcrumb.appendChild(dirItem);
+            });
+        }
+
+        async function renderDirectoryContent(dirHandle, path) {
+            try {
+                elements.fileGrid.innerHTML = '';
+                hideEmptyState();
+
+                const items = [];
+                for await (const [name, handle] of dirHandle.entries()) {
+                    items.push({ name, handle, path: path ? `${path}/${name}` : name });
+                }
+
+                items.sort((a, b) => {
+                    if (a.handle.kind === 'directory' && b.handle.kind === 'file') return -1;
+                    if (a.handle.kind === 'file' && b.handle.kind === 'directory') return 1;
+                    return a.name.localeCompare(b.name);
+                });
+
+                for (const item of items) {
+                    if (item.handle.kind === 'directory') {
+                        renderDirCard(item);
+                    } else if (item.handle.kind === 'file' && isSupportedFile(item.name)) {
+                        // 关键修复：先从 FileSystemFileHandle 获取 File 对象
+                        const file = await item.handle.getFile();
+                        await renderFileCard(file, item.name);
+                    }
+                }
+
+                if (elements.fileGrid.children.length === 0) {
+                    showEmptyState();
+                }
+            } catch (err) {
+                alert(`加载目录失败：${err.message}`);
+                showEmptyState();
+            }
+        }
+
+        function renderDirCard(item) {
+            const card = document.createElement('div');
+            card.className = 'dir-card';
+            card.innerHTML = `
+                <div class="card-thumbnail">
+                    <div class="dir-icon-card">📁</div>
+                </div>
+                <div class="card-info">
+                    <div class="dir-name">${item.name}</div>
+                    <div class="dir-count">文件夹</div>
+                </div>
+            `;
+            
+            card.addEventListener('click', async () => {
+                const subDir = state.dirTree.find(dir => dir.path === item.path);
+                if (subDir) {
+                    state.currentDirPath = item.path;
+                    state.currentDirHandle = subDir.handle;
+                    renderDirTree();
+                    renderBreadcrumb(item.path);
+                    await renderDirectoryContent(subDir.handle, item.path);
+                }
+            });
+            
+            elements.fileGrid.appendChild(card);
+        }
+
+        function handleFileImport(e) {
+            const files = e.target.files;
+            if (!files.length) return;
+
+            const newFiles = [];
+            for (const file of files) {
+                if (!isSupportedFile(file.name)) continue;
+                
+                const isDuplicate = state.importedFiles.some(
+                    f => f.name === file.name && f.size === file.size && f.lastModified === file.lastModified
+                );
+                
+                if (!isDuplicate) {
+                    const fileObj = {
+                        name: file.name,
+                        size: file.size,
+                        type: file.type,
+                        lastModified: file.lastModified,
+                        data: null
+                    };
+                    
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        fileObj.data = e.target.result;
+                        state.importedFiles.push(fileObj);
+                        localStorage.setItem('importedFiles', JSON.stringify(state.importedFiles));
+                        if (state.currentMode === 'import') {
+                            renderImportedFiles();
+                        }
+                    };
+                    reader.readAsDataURL(file);
+                    newFiles.push(fileObj);
+                }
+            }
+
+            if (newFiles.length > 0) {
+                alert(`成功导入 ${newFiles.length} 个文件`);
+            } else {
+                alert('未导入新文件（文件类型不支持或已重复）');
+            }
+
+            elements.fileInput.value = '';
+        }
+
+        function renderImportedFiles() {
+            elements.fileGrid.innerHTML = '';
+            
+            if (state.importedFiles.length === 0) {
+                showEmptyState();
+                return;
+            }
+            
+            hideEmptyState();
+            
+            state.importedFiles.forEach(fileObj => {
+                const byteString = atob(fileObj.data.split(',')[1]);
+                const mimeString = fileObj.data.split(',')[0].split(':')[1].split(';')[0];
+                const ab = new ArrayBuffer(byteString.length);
+                const ia = new Uint8Array(ab);
+                for (let i = 0; i < byteString.length; i++) {
+                    ia[i] = byteString.charCodeAt(i);
+                }
+                const file = new File([ab], fileObj.name, { 
+                    type: mimeString || fileObj.type 
+                });
+                
+                renderFileCard(file, fileObj.name);
+            });
+        }
+
+        function clearImportedFiles() {
+            if (confirm('确定要清空所有已导入的文件吗？')) {
+                state.importedFiles = [];
+                localStorage.removeItem('importedFiles');
+                renderImportedFiles();
+            }
+        }
+
+        async function renderFileCard(file, fileName) {
+            const cacheKey = `${fileName}-${file.size}-${file.lastModified}`;
+            if (state.fileCache.has(cacheKey)) {
+                const cachedHtml = state.fileCache.get(cacheKey);
+                const card = document.createElement('div');
+                card.className = 'file-card';
+                card.innerHTML = cachedHtml;
+                elements.fileGrid.appendChild(card);
+                
+                // 为缓存的卡片添加点击事件
+                addFileCardClickEvent(card, file, fileName);
+                return;
+            }
+
+            const card = document.createElement('div');
+            card.className = 'file-card';
+            card.innerHTML = `
+                <div class="card-thumbnail">
+                    <div class="loading">
+                        <div class="loading-spinner"></div>
+                    </div>
+                    <div class="file-icon">📄</div>
+                </div>
+                <div class="card-info">
+                    <div class="file-name">${fileName}</div>
+                    <div class="file-type">${getFileTypeName(file.type || fileName)}</div>
+                </div>
+            `;
+            elements.fileGrid.appendChild(card);
+
+            // 为卡片添加点击事件
+            addFileCardClickEvent(card, file, fileName);
+
+            const thumbnailContainer = card.querySelector('.card-thumbnail');
+            const loading = card.querySelector('.loading');
+            const fileIcon = card.querySelector('.file-icon');
+
+            try {
+                if (fileName.endsWith('.pdf')) {
+                    const fileUrl = URL.createObjectURL(file);
+                    const pdf = await pdfjsLib.getDocument(fileUrl).promise;
+                    const page = await pdf.getPage(1);
+                    const viewport = page.getViewport({ scale: 1.5 });
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    canvas.width = viewport.width;
+                    canvas.height = viewport.height;
+                    
+                    await page.render({ canvasContext: ctx, viewport }).promise;
+                    
+                    const img = document.createElement('img');
+                    img.className = 'thumbnail-img';
+                    img.src = canvas.toDataURL('image/png');
+                    thumbnailContainer.innerHTML = '';
+                    thumbnailContainer.appendChild(img);
+                    
+                    URL.revokeObjectURL(fileUrl);
+                } 
+                else if (fileName.endsWith('.epub')) {
+                    // 此处传入的 file 已是 File 对象，可正常读取
+                    const arrayBuffer = await readFileAsArrayBuffer(file);
+                    const zip = await JSZip.loadAsync(arrayBuffer);
+                    const coverPaths = [
+                        'OEBPS/cover.jpg', 'OEBPS/cover.png',
+                        'OEBPS/images/cover.jpg', 'OEBPS/images/cover.png',
+                        'cover.jpg', 'cover.png'
+                    ];
+                    
+                    let coverFile = null;
+                    for (const path of coverPaths) {
+                        if (zip.files[path]) {
+                            coverFile = zip.files[path];
+                            break;
+                        }
+                    }
+                    
+                    if (coverFile) {
+                        const coverData = await coverFile.async('base64');
+                        const img = document.createElement('img');
+                        img.className = 'thumbnail-img';
+                        img.src = `data:image/${coverFile.name.split('.').pop()};base64,${coverData}`;
+                        thumbnailContainer.innerHTML = '';
+                        thumbnailContainer.appendChild(img);
+                    } else {
+                        fileIcon.textContent = '📖';
+                    }
+                } 
+                else {
+                    fileIcon.textContent = getFileIcon(fileName);
+                }
+
+                loading.remove();
+                state.fileCache.set(cacheKey, card.innerHTML);
+            } catch (err) {
+                console.error(`处理文件 ${fileName} 失败:`, err);
+                fileIcon.textContent = '❌';
+                loading.remove();
+            }
+        }
+
+        // 为文件卡片添加点击事件
+        function addFileCardClickEvent(card, file, fileName) {
+            card.addEventListener('click', async () => {
+                if (fileName.endsWith('.pdf')) {
+                    await openPdfReader(file, fileName);
+                } else if (fileName.endsWith('.epub')) {
+                    await openEpubReader(file, fileName);
+                } else {
+                    // 其他文件类型可以添加相应的处理逻辑
+                    alert(`暂不支持阅读 ${getFileTypeName(fileName)} 类型的文件`);
+                }
+            });
+        }
+
+        // 打开PDF阅读器 - PWA优化版
+        async function openPdfReader(file, fileName) {
+            // 显示阅读视图
+            elements.readerView.style.display = 'flex';
+            elements.readerTitle.textContent = fileName;
+            elements.pdfContainer.style.display = 'block';
+            elements.epubContainer.style.display = 'none';
+            elements.pdfContainer.innerHTML = '';
+
+            try {
+                console.log('开始处理PDF文件:', fileName);
+                
+                // 直接从File对象读取数据，不使用临时URL
+                const arrayBuffer = await file.arrayBuffer();
+                console.log('PDF文件读取成功，大小:', arrayBuffer.byteLength, '字节');
+                
+                // 使用PDF.js直接加载ArrayBuffer
+                const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                console.log('PDF文档加载成功，页数:', pdf.numPages);
+
+                // 渲染所有页面
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const viewport = page.getViewport({ scale: 1.5 });
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    canvas.width = viewport.width;
+                    canvas.height = viewport.height;
+                    canvas.className = 'pdf-page';
+
+                    await page.render({ canvasContext: ctx, viewport }).promise;
+                    elements.pdfContainer.appendChild(canvas);
+                    console.log('PDF第', i, '页渲染成功');
+                }
+
+                console.log('PDF文件渲染完成');
+            } catch (err) {
+                console.error(`打开PDF文件失败:`, err);
+                elements.pdfContainer.innerHTML = `<div style="padding: 20px; text-align: center; color: #909399;">打开PDF文件失败: ${err.message}</div>`;
+            }
+        }
+
+        // 打开EPUB阅读器
+        async function openEpubReader(file, fileName) {
+            // 显示阅读视图
+            elements.readerView.style.display = 'flex';
+            elements.readerTitle.textContent = fileName;
+            elements.pdfContainer.style.display = 'none';
+            elements.epubContainer.style.display = 'block';
+            elements.epubContainer.innerHTML = '';
+
+            // 直接显示加载中信息
+            elements.epubContainer.innerHTML = `<div style="padding: 20px; text-align: center; color: #4096ff;">正在加载EPUB文件...</div>`;
+
+            try {
+                console.log('=== 开始处理EPUB文件 ===');
+                console.log('文件名:', fileName);
+                console.log('文件大小:', file.size);
+                console.log('文件类型:', file.type);
+                
+                // 检查是否有epubjs库
+                console.log('检查EPUB.js库是否加载...');
+                if (typeof ePub === 'undefined') {
+                    throw new Error('EPUB阅读器库未加载');
+                }
+                console.log('EPUB.js库加载成功');
+
+                // 创建EPUB容器 - 调整样式以确保内容可见
+                const epubView = document.createElement('div');
+                epubView.id = 'epub-content';
+                epubView.style.width = '100%';
+                epubView.style.height = '100%';
+                epubView.style.overflow = 'auto';
+                epubView.style.backgroundColor = '#fff';
+                epubView.style.padding = '20px';
+                epubView.style.boxSizing = 'border-box';
+                
+                // 清空容器并添加新的渲染容器
+                elements.epubContainer.innerHTML = '';
+                elements.epubContainer.appendChild(epubView);
+
+                console.log('EPUB容器创建成功，尺寸:', epubView.offsetWidth, 'x', epubView.offsetHeight);
+
+                // 直接从File对象读取数据，不使用临时URL
+                console.log('开始读取EPUB文件:', fileName);
+                const arrayBuffer = await file.arrayBuffer();
+                console.log('EPUB文件读取成功，大小:', arrayBuffer.byteLength, '字节');
+                
+                // 尝试使用最简单的方式创建EPUB实例
+                console.log('创建EPUB实例...');
+                try {
+                    // 直接传递ArrayBuffer给ePub构造函数
+                    const book = ePub(arrayBuffer);
+                    console.log('EPUB实例创建成功');
+                    
+                    // 计算适合屏幕的尺寸
+                    const screenWidth = window.innerWidth;
+                    const screenHeight = window.innerHeight - 60; // 减去头部高度
+                    
+                    console.log('渲染尺寸:', screenWidth, 'x', screenHeight);
+                    
+                    const rendition = book.renderTo(epubView, {
+                        width: screenWidth,
+                        height: screenHeight,
+                        flow: 'paginated',
+                        spread: 'always', // 始终双面展示
+                        method: 'default'
+                    });
+                    console.log('渲染实例创建成功');
+                    
+                    // 绑定键盘事件进行翻页
+                    function handleKeyPress(e) {
+                        if (e.key === 'ArrowLeft') {
+                            e.preventDefault();
+                            rendition.prev();
+                            console.log('向左翻页');
+                        } else if (e.key === 'ArrowRight') {
+                            e.preventDefault();
+                            rendition.next();
+                            console.log('向右翻页');
+                        }
+                    }
+                    
+                    // 添加键盘事件监听器
+                    document.addEventListener('keydown', handleKeyPress);
+                    console.log('键盘事件监听器添加成功');
+                    
+                    // 保存事件监听器引用，以便在返回时移除
+                    state.currentRendition = rendition;
+                    state.keyPressHandler = handleKeyPress;
+                    
+                    // 渲染第一页
+                    console.log('开始渲染第一页...');
+                    rendition.display().then(function() {
+                        console.log('第一页渲染成功');
+                    }).catch(function(error) {
+                        console.error('渲染失败:', error);
+                    });
+                } catch (bookError) {
+                    console.error('创建EPUB实例失败:', bookError);
+                    elements.epubContainer.innerHTML = `<div style="padding: 20px; text-align: center; color: #f56c6c;">创建EPUB实例失败: ${bookError.message}</div>`;
+                }
+            } catch (err) {
+                console.error('处理EPUB文件时发生错误:', err);
+                elements.epubContainer.innerHTML = `<div style="padding: 20px; text-align: center; color: #f56c6c;">处理EPUB文件时发生错误: ${err.message}<br>详细错误: ${err.stack}</div>`;
+            }
+        }
+
+        function createFileInput() {
+            const fileInput = document.createElement('input');
+            fileInput.type = 'file';
+            fileInput.id = 'file-input';
+            fileInput.multiple = true;
+            fileInput.accept = '.pdf,.epub,.txt,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.jpg,.png';
+            fileInput.style.display = 'none';
+            document.body.appendChild(fileInput);
+            elements.fileInput = fileInput;
+        }
+
+        // 工具函数：读取 File/Blob 为 ArrayBuffer（兼容两种模式）
+        function readFileAsArrayBuffer(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (e) => resolve(e.target.result);
+                reader.onerror = (err) => reject(err);
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
+        function isSupportedFile(fileName) {
+            const supportedExts = ['.pdf', '.epub', '.txt', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.jpg', '.png'];
+            const ext = fileName.split('.').pop().toLowerCase();
+            return supportedExts.some(s => fileName.endsWith(s));
+        }
+
+        function getFileTypeName(fileTypeOrName) {
+            const ext = fileTypeOrName.split('.').pop().toLowerCase();
+            const typeMap = {
+                pdf: 'PDF文档',
+                epub: 'EPUB电子书',
+                txt: '文本文档',
+                doc: 'Word文档',
+                docx: 'Word文档',
+                xls: 'Excel表格',
+                xlsx: 'Excel表格',
+                ppt: 'PPT演示文稿',
+                pptx: 'PPT演示文稿',
+                jpg: '图片文件',
+                png: '图片文件'
+            };
+            return typeMap[ext] || '未知文件';
+        }
+
+        function getFileIcon(fileName) {
+            const ext = fileName.split('.').pop().toLowerCase();
+            const iconMap = {
+                txt: '📝',
+                doc: '📄', docx: '📄',
+                xls: '📊', xlsx: '📊',
+                ppt: '📋', pptx: '📋',
+                jpg: '🖼️', png: '🖼️',
+                epub: '📖', pdf: '📄'
+            };
+            return iconMap[ext] || '📎';
+        }
+
+        function showEmptyState() {
+            elements.emptyState.style.display = 'flex';
+            elements.fileGrid.style.display = 'none';
+        }
+
+        function hideEmptyState() {
+            elements.emptyState.style.display = 'none';
+            elements.fileGrid.style.display = 'grid';
         }
     </script>
 </body>

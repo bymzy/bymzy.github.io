@@ -1,40 +1,23 @@
 {
-  "name": "PDF阅读器",
-  "short_name": "PDF读",
-  "description": "本地PDF阅读器 - 支持多层目录结构、离线访问、添加到主屏幕",
-  "start_url": "/",
-  "scope": "/",
+  "name": "本地文件阅读器",
+  "short_name": "文件阅读器",
+  "description": "一个可以阅读PDF和EPUB文档的PWA应用",
+  "start_url": "/index.html",
   "display": "standalone",
   "background_color": "#ffffff",
-  "theme_color": "#2196f3",
-  "orientation": "portrait-primary",
+  "theme_color": "#4096ff",
   "icons": [
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%232196f3' width='192' height='192'/><text x='50%' y='50%' font-size='100' fill='white' text-anchor='middle' dy='.3em'>PDF</text></svg>",
+      "src": "https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=file%20reader%20app%20icon%20with%20document%20and%20book%20symbols%2C%20clean%20modern%20design%2C%20blue%20and%20white%20color%20scheme&image_size=square",
       "sizes": "192x192",
-      "type": "image/svg+xml",
+      "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect fill='%232196f3' width='512' height='512'/><text x='50%' y='50%' font-size='300' fill='white' text-anchor='middle' dy='.3em'>PDF</text></svg>",
+      "src": "https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=file%20reader%20app%20icon%20with%20document%20and%20book%20symbols%2C%20clean%20modern%20design%2C%20blue%20and%20white%20color%20scheme&image_size=square_hd",
       "sizes": "512x512",
-      "type": "image/svg+xml",
+      "type": "image/png",
       "purpose": "any"
-    },
-    {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%232196f3' width='192' height='192' rx='45'/><text x='50%' y='50%' font-size='100' fill='white' text-anchor='middle' dy='.3em'>PDF</text></svg>",
-      "sizes": "192x192",
-      "type": "image/svg+xml",
-      "purpose": "maskable"
-    }
-  ],
-  "categories": ["productivity"],
-  "screenshots": [
-    {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 540 720'><rect fill='%23f5f5f5' width='540' height='720'/><rect fill='%232196f3' width='540' height='100'/><text x='270' y='60' font-size='40' fill='white' text-anchor='middle' font-weight='bold'>PDF阅读器</text></svg>",
-      "sizes": "540x720",
-      "type": "image/svg+xml",
-      "form_factor": "narrow"
     }
   ]
 }
