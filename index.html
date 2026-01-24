@@ -428,11 +428,11 @@
         }
     </style>
 </head>
-<body class="mode-directory">
+<body class="mode-import">
     <div class="navbar">
         <div class="nav-tabs">
-            <div class="nav-tab active" data-mode="directory">本地目录</div>
-            <div class="nav-tab" data-mode="import">导入文件</div>
+            <div class="nav-tab active" data-mode="import">已导入文件</div>
+            <div class="nav-tab" data-mode="directory">本地目录</div>
         </div>
         <div class="nav-actions">
             <button class="action-btn directory-mode" id="select-dir-btn">选择目录</button>
@@ -474,14 +474,137 @@
     <script>
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
 
+        // IndexedDB 配置
+        const DB_NAME = 'FileReaderDB';
+        const DB_VERSION = 1;
+        const STORE_NAME = 'importedFiles';
+        
+        // IndexedDB 初始化
+        function initIndexedDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, DB_VERSION);
+                
+                request.onerror = (event) => {
+                    console.error('IndexedDB 初始化失败:', event.target.error);
+                    reject(event.target.error);
+                };
+                
+                request.onsuccess = (event) => {
+                    console.log('IndexedDB 初始化成功');
+                    resolve(event.target.result);
+                };
+                
+                request.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    
+                    // 删除旧的存储对象（如果存在）
+                    if (db.objectStoreNames.contains(STORE_NAME)) {
+                        db.deleteObjectStore(STORE_NAME);
+                    }
+                    
+                    // 创建新的存储对象
+                    const store = db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
+                    store.createIndex('name', 'name', { unique: false });
+                    store.createIndex('size', 'size', { unique: false });
+                    store.createIndex('lastModified', 'lastModified', { unique: false });
+                    console.log('IndexedDB 存储对象创建成功');
+                };
+            });
+        }
+        
+        // 从 IndexedDB 获取所有导入的文件
+        function getAllImportedFiles() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, DB_VERSION);
+                
+                request.onsuccess = (event) => {
+                    const db = event.target.result;
+                    const transaction = db.transaction(STORE_NAME, 'readonly');
+                    const store = transaction.objectStore(STORE_NAME);
+                    const getAllRequest = store.getAll();
+                    
+                    getAllRequest.onsuccess = () => {
+                        resolve(getAllRequest.result);
+                    };
+                    
+                    getAllRequest.onerror = (event) => {
+                        console.error('获取导入文件失败:', event.target.error);
+                        reject(event.target.error);
+                    };
+                };
+                
+                request.onerror = (event) => {
+                    console.error('打开 IndexedDB 失败:', event.target.error);
+                    reject(event.target.error);
+                };
+            });
+        }
+        
+        // 保存文件到 IndexedDB
+        function saveFileToIndexedDB(fileObj) {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, DB_VERSION);
+                
+                request.onsuccess = (event) => {
+                    const db = event.target.result;
+                    const transaction = db.transaction(STORE_NAME, 'readwrite');
+                    const store = transaction.objectStore(STORE_NAME);
+                    const addRequest = store.add(fileObj);
+                    
+                    addRequest.onsuccess = () => {
+                        resolve(addRequest.result);
+                    };
+                    
+                    addRequest.onerror = (event) => {
+                        console.error('保存文件到 IndexedDB 失败:', event.target.error);
+                        reject(event.target.error);
+                    };
+                };
+                
+                request.onerror = (event) => {
+                    console.error('打开 IndexedDB 失败:', event.target.error);
+                    reject(event.target.error);
+                };
+            });
+        }
+        
+        // 从 IndexedDB 删除所有文件
+        function clearIndexedDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, DB_VERSION);
+                
+                request.onsuccess = (event) => {
+                    const db = event.target.result;
+                    const transaction = db.transaction(STORE_NAME, 'readwrite');
+                    const store = transaction.objectStore(STORE_NAME);
+                    const clearRequest = store.clear();
+                    
+                    clearRequest.onsuccess = () => {
+                        resolve();
+                    };
+                    
+                    clearRequest.onerror = (event) => {
+                        console.error('清空 IndexedDB 失败:', event.target.error);
+                        reject(event.target.error);
+                    };
+                };
+                
+                request.onerror = (event) => {
+                    console.error('打开 IndexedDB 失败:', event.target.error);
+                    reject(event.target.error);
+                };
+            });
+        }
+        
         const state = {
-            currentMode: 'directory',
+            currentMode: 'import',
             currentDirHandle: null,
             currentDirPath: '',
             dirTree: [],
-            importedFiles: JSON.parse(localStorage.getItem('importedFiles') || '[]'),
-            fileCache: new Map()
-        };
+            importedFiles: [],
+            fileCache: new Map(),
+            db: null
+        }
 
         const elements = {
             body: document.body,
@@ -505,7 +628,7 @@
 
         init();
 
-        function init() {
+        async function init() {
             createFileInput();
             
             elements.navTabs.forEach(tab => {
@@ -551,9 +674,32 @@
                 elements.pdfContainer.innerHTML = '';
                 elements.epubContainer.innerHTML = '';
             });
-
-            if (state.importedFiles.length > 0) {
-                renderImportedFiles();
+            
+            // 初始化 IndexedDB
+            try {
+                state.db = await initIndexedDB();
+                // 从 IndexedDB 加载导入的文件
+                state.importedFiles = await getAllImportedFiles();
+                console.log('已加载导入文件数量:', state.importedFiles.length);
+                
+                // 根据当前模式渲染对应内容
+                if (state.currentMode === 'import') {
+                    renderImportedFiles();
+                } else if (state.currentMode === 'directory') {
+                    if (state.currentDirHandle) {
+                        renderDirectoryContent(state.currentDirHandle, state.currentDirPath);
+                    } else {
+                        showEmptyState();
+                    }
+                }
+            } catch (error) {
+                console.error('加载导入文件失败:', error);
+                state.importedFiles = [];
+                
+                // 根据当前模式显示空状态
+                if (state.currentMode === 'import' || state.currentMode === 'directory') {
+                    showEmptyState();
+                }
             }
         }
 
@@ -759,11 +905,13 @@
             elements.fileGrid.appendChild(card);
         }
 
-        function handleFileImport(e) {
+        async function handleFileImport(e) {
             const files = e.target.files;
             if (!files.length) return;
 
             const newFiles = [];
+            let importedCount = 0;
+            
             for (const file of files) {
                 if (!isSupportedFile(file.name)) continue;
                 
@@ -772,30 +920,39 @@
                 );
                 
                 if (!isDuplicate) {
-                    const fileObj = {
-                        name: file.name,
-                        size: file.size,
-                        type: file.type,
-                        lastModified: file.lastModified,
-                        data: null
-                    };
-                    
-                    const reader = new FileReader();
-                    reader.onload = (e) => {
-                        fileObj.data = e.target.result;
-                        state.importedFiles.push(fileObj);
-                        localStorage.setItem('importedFiles', JSON.stringify(state.importedFiles));
+                    try {
+                        const fileObj = {
+                            name: file.name,
+                            size: file.size,
+                            type: file.type,
+                            lastModified: file.lastModified,
+                            data: null
+                        };
+                        
+                        // 使用 ArrayBuffer 替代 DataURL，减少存储空间占用
+                        const arrayBuffer = await readFileAsArrayBuffer(file);
+                        fileObj.data = arrayBuffer;
+                        
+                        // 保存到 IndexedDB
+                        await saveFileToIndexedDB(fileObj);
+                        
+                        // 更新内存中的文件列表
+                        state.importedFiles = await getAllImportedFiles();
+                        
+                        importedCount++;
+                        
                         if (state.currentMode === 'import') {
                             renderImportedFiles();
                         }
-                    };
-                    reader.readAsDataURL(file);
-                    newFiles.push(fileObj);
+                    } catch (error) {
+                        console.error('导入文件失败:', error);
+                        alert(`导入文件 ${file.name} 失败: ${error.message}`);
+                    }
                 }
             }
 
-            if (newFiles.length > 0) {
-                alert(`成功导入 ${newFiles.length} 个文件`);
+            if (importedCount > 0) {
+                alert(`成功导入 ${importedCount} 个文件`);
             } else {
                 alert('未导入新文件（文件类型不支持或已重复）');
             }
@@ -814,26 +971,30 @@
             hideEmptyState();
             
             state.importedFiles.forEach(fileObj => {
-                const byteString = atob(fileObj.data.split(',')[1]);
-                const mimeString = fileObj.data.split(',')[0].split(':')[1].split(';')[0];
-                const ab = new ArrayBuffer(byteString.length);
-                const ia = new Uint8Array(ab);
-                for (let i = 0; i < byteString.length; i++) {
-                    ia[i] = byteString.charCodeAt(i);
-                }
-                const file = new File([ab], fileObj.name, { 
-                    type: mimeString || fileObj.type 
+                // 直接使用 ArrayBuffer 创建 File 对象
+                const file = new File([fileObj.data], fileObj.name, { 
+                    type: fileObj.type,
+                    lastModified: fileObj.lastModified
                 });
                 
                 renderFileCard(file, fileObj.name);
             });
         }
 
-        function clearImportedFiles() {
+        async function clearImportedFiles() {
             if (confirm('确定要清空所有已导入的文件吗？')) {
-                state.importedFiles = [];
-                localStorage.removeItem('importedFiles');
-                renderImportedFiles();
+                try {
+                    // 清空 IndexedDB 中的数据
+                    await clearIndexedDB();
+                    // 更新内存中的文件列表
+                    state.importedFiles = await getAllImportedFiles();
+                    // 重新渲染导入文件列表
+                    renderImportedFiles();
+                    alert('已成功清空所有导入的文件');
+                } catch (error) {
+                    console.error('清空导入文件失败:', error);
+                    alert('清空导入文件失败: ' + error.message);
+                }
             }
         }
 
