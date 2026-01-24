@@ -11,7 +11,8 @@
         <link rel="apple-touch-icon" href="https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=file%20reader%20app%20icon%20with%20document%20symbol%2C%20minimal%20design%2C%20blue%20color&image_size=square">
         <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
         <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
-        <script src="epub.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/epubjs/dist/epub.min.js"></script>
         <script>
             // 注册Service Worker
             if ('serviceWorker' in navigator) {
@@ -264,6 +265,14 @@
             color: #909399;
         }
 
+        .reading-progress {
+            font-size: 11px;
+            color: #4096ff;
+            margin-top: 5px;
+            padding-top: 5px;
+            border-top: 1px solid #e5e6eb;
+        }
+
         .loading {
             position: absolute;
             top: 0;
@@ -345,6 +354,15 @@
             text-overflow: ellipsis;
         }
 
+        .reader-page-info {
+            padding: 8px 16px;
+            background-color: #f0f2f5;
+            border-radius: 6px;
+            font-size: 14px;
+            color: #303133;
+            font-weight: 500;
+        }
+
         .reader-content {
             flex: 1;
             overflow: hidden;
@@ -364,13 +382,49 @@
         }
 
         .pdf-page {
-            margin: 20px auto;
+            margin: 0 auto;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
 
         .epub-view {
             width: 100%;
             height: 100%;
+        }
+        
+        /* 目录树样式 */
+        .sidebar {
+            width: 250px;
+            background-color: #f5f7fa;
+            border-right: 1px solid #e4e7ed;
+            overflow-y: auto;
+            padding: 10px;
+        }
+
+        .dir-tree-item {
+            display: flex;
+            align-items: center;
+            padding: 8px 10px;
+            margin-bottom: 4px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #606266;
+            transition: all 0.2s ease;
+        }
+
+        .dir-tree-item:hover {
+            background-color: #ecf5ff;
+            color: #409eff;
+        }
+
+        .dir-tree-item.active {
+            background-color: #ecf5ff;
+            color: #409eff;
+            font-weight: bold;
+        }
+
+        .dir-icon {
+            margin-right: 8px;
         }
     </style>
 </head>
@@ -409,6 +463,7 @@
         <div class="reader-header">
             <button class="reader-back-btn" id="readerBackBtn">返回</button>
             <div class="reader-title" id="readerTitle"></div>
+            <div class="reader-page-info" id="readerPageInfo"></div>
         </div>
         <div class="reader-content">
             <div id="pdf-container"></div>
@@ -443,6 +498,7 @@
             readerView: document.getElementById('readerView'),
             readerBackBtn: document.getElementById('readerBackBtn'),
             readerTitle: document.getElementById('readerTitle'),
+            readerPageInfo: document.getElementById('readerPageInfo'),
             pdfContainer: document.getElementById('pdf-container'),
             epubContainer: document.getElementById('epub-container')
         };
@@ -478,6 +534,16 @@
                 // 清理当前渲染实例
                 if (state.currentRendition) {
                     state.currentRendition = null;
+                }
+                
+                // 移除所有目录面板
+                const existingPdfTocPanel = document.getElementById('pdf-toc-panel');
+                if (existingPdfTocPanel) {
+                    existingPdfTocPanel.remove();
+                }
+                const existingEpubTocPanel = document.getElementById('epub-toc-panel');
+                if (existingEpubTocPanel) {
+                    existingEpubTocPanel.remove();
                 }
                 
                 // 隐藏阅读视图并清理内容
@@ -773,12 +839,19 @@
 
         async function renderFileCard(file, fileName) {
             const cacheKey = `${fileName}-${file.size}-${file.lastModified}`;
+            
+            // 获取阅读进度信息
+            const progressInfo = getReadingProgressInfo(fileName, file.size, file.lastModified);
+            
             if (state.fileCache.has(cacheKey)) {
                 const cachedHtml = state.fileCache.get(cacheKey);
                 const card = document.createElement('div');
                 card.className = 'file-card';
                 card.innerHTML = cachedHtml;
                 elements.fileGrid.appendChild(card);
+                
+                // 更新阅读进度信息
+                updateProgressInfo(card, progressInfo);
                 
                 // 为缓存的卡片添加点击事件
                 addFileCardClickEvent(card, file, fileName);
@@ -797,6 +870,7 @@
                 <div class="card-info">
                     <div class="file-name">${fileName}</div>
                     <div class="file-type">${getFileTypeName(file.type || fileName)}</div>
+                    ${progressInfo ? `<div class="reading-progress">${progressInfo}</div>` : ''}
                 </div>
             `;
             elements.fileGrid.appendChild(card);
@@ -812,6 +886,20 @@
                 if (fileName.endsWith('.pdf')) {
                     const fileUrl = URL.createObjectURL(file);
                     const pdf = await pdfjsLib.getDocument(fileUrl).promise;
+                    
+                    // 保存PDF总页数到localStorage
+                    const progressKey = `reading_progress_${fileName}_${file.size}_${file.lastModified}`;
+                    const existingProgress = JSON.parse(localStorage.getItem(progressKey) || '{}');
+                    if (!existingProgress.totalPages) {
+                        existingProgress.totalPages = pdf.numPages;
+                        existingProgress.currentPage = existingProgress.currentPage || 0;
+                        localStorage.setItem(progressKey, JSON.stringify(existingProgress));
+                    }
+                    
+                    // 更新卡片上的进度信息
+                    const updatedProgressInfo = getReadingProgressInfo(fileName, file.size, file.lastModified);
+                    updateProgressInfo(card, updatedProgressInfo);
+                    
                     const page = await pdf.getPage(1);
                     const viewport = page.getViewport({ scale: 1.5 });
                     const canvas = document.createElement('canvas');
@@ -857,17 +945,92 @@
                     } else {
                         fileIcon.textContent = '📖';
                     }
+                    
+                    // 尝试使用epub.js获取EPUB总章节数并保存到localStorage
+                    try {
+                        if (typeof ePub !== 'undefined') {
+                            const book = ePub(arrayBuffer);
+                            book.loaded.navigation.then(function(toc) {
+                                const totalChapters = toc.length;
+                                console.log('EPUB总章节数:', totalChapters);
+                                
+                                // 保存EPUB总章节数到localStorage
+                                const progressKey = `reading_progress_${fileName}_${file.size}_${file.lastModified}`;
+                                const existingProgress = JSON.parse(localStorage.getItem(progressKey) || '{}');
+                                if (!existingProgress.totalChapters) {
+                                    existingProgress.totalChapters = totalChapters;
+                                    existingProgress.currentChapter = existingProgress.currentChapter || 0;
+                                    localStorage.setItem(progressKey, JSON.stringify(existingProgress));
+                                    
+                                    // 更新卡片上的进度信息
+                                    const updatedProgressInfo = getReadingProgressInfo(fileName, file.size, file.lastModified);
+                                    updateProgressInfo(card, updatedProgressInfo);
+                                }
+                            });
+                        }
+                    } catch (err) {
+                        console.log('获取EPUB章节数失败:', err);
+                    }
                 } 
                 else {
                     fileIcon.textContent = getFileIcon(fileName);
                 }
 
                 loading.remove();
-                state.fileCache.set(cacheKey, card.innerHTML);
+                // 不缓存包含进度信息的卡片，因为进度会变化
             } catch (err) {
                 console.error(`处理文件 ${fileName} 失败:`, err);
                 fileIcon.textContent = '❌';
                 loading.remove();
+            }
+        }
+
+        // 获取阅读进度信息
+        function getReadingProgressInfo(fileName, fileSize, lastModified) {
+            const progressKey = `reading_progress_${fileName}_${fileSize}_${lastModified}`;
+            const progressData = JSON.parse(localStorage.getItem(progressKey) || 'null');
+            
+            // 如果没有阅读进度，返回null
+            if (!progressData || (!progressData.currentPage && !progressData.currentChapter)) {
+                return null;
+            }
+            
+            const currentPage = progressData.currentPage || progressData.currentChapter;
+            // 对于PDF文件，尝试从文件名和大小推断总页数
+            let totalPages = progressData.totalPages || progressData.totalChapters || 1;
+            
+            // 如果没有存储总页数，尝试从文件名中提取（如果文件名包含页数信息）
+            if (totalPages === 1) {
+                const pageMatch = fileName.match(/\((\d+)页\)/i);
+                if (pageMatch && pageMatch[1]) {
+                    totalPages = parseInt(pageMatch[1]);
+                }
+            }
+            
+            // 只有当总页数大于1且当前页数大于0时，才显示进度信息
+            if (totalPages <= 1 || currentPage <= 0) {
+                return null;
+            }
+            
+            const percentage = Math.round((currentPage / totalPages) * 100);
+            const remainingPages = totalPages - currentPage;
+            
+            return `已读 ${currentPage} 页，剩余 ${remainingPages} 页 (${percentage}%)`;
+        }
+
+        // 更新卡片上的阅读进度信息
+        function updateProgressInfo(card, progressInfo) {
+            let progressElement = card.querySelector('.reading-progress');
+            
+            if (progressInfo) {
+                if (!progressElement) {
+                    progressElement = document.createElement('div');
+                    progressElement.className = 'reading-progress';
+                    card.querySelector('.card-info').appendChild(progressElement);
+                }
+                progressElement.textContent = progressInfo;
+            } else if (progressElement) {
+                progressElement.remove();
             }
         }
 
@@ -885,7 +1048,7 @@
             });
         }
 
-        // 打开PDF阅读器 - PWA优化版
+        // 打开PDF阅读器 - 翻页模式
         async function openPdfReader(file, fileName) {
             // 显示阅读视图
             elements.readerView.style.display = 'flex';
@@ -905,20 +1068,337 @@
                 const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
                 console.log('PDF文档加载成功，页数:', pdf.numPages);
 
-                // 渲染所有页面
-                for (let i = 1; i <= pdf.numPages; i++) {
-                    const page = await pdf.getPage(i);
-                    const viewport = page.getViewport({ scale: 1.5 });
-                    const canvas = document.createElement('canvas');
-                    const ctx = canvas.getContext('2d');
-                    canvas.width = viewport.width;
-                    canvas.height = viewport.height;
-                    canvas.className = 'pdf-page';
+                // 获取阅读进度
+                const progressKey = `reading_progress_${fileName}_${file.size}_${file.lastModified}`;
+                const savedProgress = JSON.parse(localStorage.getItem(progressKey));
+                let currentPage = savedProgress.currentPage || 1;
 
-                    await page.render({ canvasContext: ctx, viewport }).promise;
-                    elements.pdfContainer.appendChild(canvas);
-                    console.log('PDF第', i, '页渲染成功');
+                // 初始化缩放级别
+                let currentScale = 1.0;
+                
+                // 初始化目录数据
+                let pdfOutline = [];
+                
+                // 获取PDF目录
+                try {
+                    pdfOutline = await pdf.getOutline();
+                    console.log('PDF目录获取成功，条目数:', pdfOutline.length);
+                    
+                    // 缓存目录信息到localStorage
+                    const outlineKey = `pdf_outline_${fileName}_${file.size}_${file.lastModified}`;
+                    // 转换目录数据为可序列化格式
+                    const serializableOutline = JSON.parse(JSON.stringify(pdfOutline));
+                    localStorage.setItem(outlineKey, JSON.stringify(serializableOutline));
+                } catch (err) {
+                    console.log('PDF无目录或获取目录失败:', err);
+                    pdfOutline = [];
                 }
+                
+                // 检查并移除已存在的目录面板（包括EPUB的目录面板）
+                const existingPdfTocPanel = document.getElementById('pdf-toc-panel');
+                if (existingPdfTocPanel) {
+                    existingPdfTocPanel.remove();
+                }
+                const existingEpubTocPanel = document.getElementById('epub-toc-panel');
+                if (existingEpubTocPanel) {
+                    existingEpubTocPanel.remove();
+                }
+                
+                // 修改阅读视图布局，添加目录面板
+                const readerContent = elements.pdfContainer.parentElement;
+                readerContent.style.display = 'flex';
+                readerContent.style.overflow = 'hidden';
+                
+                // 创建目录面板
+                const tocPanel = document.createElement('div');
+                tocPanel.id = 'pdf-toc-panel';
+                tocPanel.style.width = '250px';
+                tocPanel.style.height = '100%';
+                tocPanel.style.backgroundColor = '#f5f7fa';
+                tocPanel.style.borderRight = '1px solid #e0e0e0';
+                tocPanel.style.padding = '15px';
+                tocPanel.style.overflowY = 'auto';
+                tocPanel.style.flexShrink = '0';
+                tocPanel.style.position = 'relative';
+                tocPanel.style.zIndex = '10';
+                
+                // 目录标题
+                const tocTitle = document.createElement('div');
+                tocTitle.style.fontSize = '16px';
+                tocTitle.style.fontWeight = '500';
+                tocTitle.style.marginBottom = '15px';
+                tocTitle.style.color = '#303133';
+                tocTitle.textContent = '目录';
+                tocPanel.appendChild(tocTitle);
+                
+                // 渲染目录
+                function renderTOC(outline, container, level = 0) {
+                    if (!outline || outline.length === 0) {
+                        const noTocMsg = document.createElement('div');
+                        noTocMsg.style.fontSize = '14px';
+                        noTocMsg.style.color = '#909399';
+                        noTocMsg.style.textAlign = 'center';
+                        noTocMsg.textContent = '该PDF无目录';
+                        container.appendChild(noTocMsg);
+                        return;
+                    }
+                    
+                    const ul = document.createElement('ul');
+                    ul.style.listStyle = 'none';
+                    ul.style.padding = '0';
+                    ul.style.margin = '0';
+                    
+                    outline.forEach(item => {
+                        const li = document.createElement('li');
+                        li.style.marginBottom = '8px';
+                        li.style.paddingLeft = `${level * 15}px`;
+                        
+                        const tocItem = document.createElement('div');
+                        tocItem.style.fontSize = '14px';
+                        tocItem.style.color = '#4096ff';
+                        tocItem.style.cursor = 'pointer';
+                        tocItem.style.padding = '5px 8px';
+                        tocItem.style.borderRadius = '4px';
+                        tocItem.style.transition = 'background-color 0.2s ease';
+                        tocItem.textContent = item.title;
+                        
+                        tocItem.addEventListener('mouseover', () => {
+                            tocItem.style.backgroundColor = '#e8f3ff';
+                        });
+                        
+                        tocItem.addEventListener('mouseout', () => {
+                            tocItem.style.backgroundColor = 'transparent';
+                        });
+                        
+                        tocItem.addEventListener('click', async (e) => {
+                            e.stopPropagation();
+                            // 跳转到对应页面
+                            if (item.dest) {
+                                console.log('page index: ', await pdf.getPageIndex(item.dest[0]));
+                                goToPage(await pdf.getPageIndex(item.dest[0]));
+                            }
+                        });
+                        
+                        li.appendChild(tocItem);
+                        
+                        // 渲染子目录
+                        if (item.items && item.items.length > 0) {
+                            const subContainer = document.createElement('div');
+                            subContainer.style.display = 'none'; // 默认折叠
+                            renderTOC(item.items, subContainer, level + 1);
+                            li.appendChild(subContainer);
+                            
+                            // 添加展开/折叠按钮
+                            const toggleBtn = document.createElement('span');
+                            toggleBtn.style.display = 'inline-block';
+                            toggleBtn.style.width = '16px';
+                            toggleBtn.style.height = '16px';
+                            toggleBtn.style.textAlign = 'center';
+                            toggleBtn.style.marginRight = '5px';
+                            toggleBtn.style.fontSize = '12px';
+                            toggleBtn.textContent = '▶';
+                            toggleBtn.style.transform = 'rotate(0deg)';
+                            toggleBtn.style.transition = 'transform 0.2s ease';
+                            
+                            tocItem.insertBefore(toggleBtn, tocItem.firstChild);
+                            
+                            // 为展开/折叠按钮添加单独的点击事件
+                            toggleBtn.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                if (subContainer.style.display === 'none') {
+                                    subContainer.style.display = 'block';
+                                    toggleBtn.style.transform = 'rotate(90deg)';
+                                } else {
+                                    subContainer.style.display = 'none';
+                                    toggleBtn.style.transform = 'rotate(0deg)';
+                                }
+                            });
+                        }
+                        
+                        ul.appendChild(li);
+                    });
+                    
+                    container.appendChild(ul);
+                }
+                
+                // 渲染目录
+                renderTOC(pdfOutline, tocPanel);
+                
+                // 插入目录面板到阅读内容区域
+                readerContent.insertBefore(tocPanel, elements.pdfContainer);
+                
+                // 调整PDF容器样式
+                elements.pdfContainer.style.flex = '1';
+                elements.pdfContainer.style.overflow = 'auto';
+                elements.pdfContainer.style.position = 'relative';
+                elements.pdfContainer.style.zIndex = '5';
+                
+                // 渲染页面函数
+                async function renderPages() {
+                    elements.pdfContainer.innerHTML = '';
+                    
+                    // 创建内部容器，用于存放页面内容
+                    const contentWrapper = document.createElement('div');
+                    contentWrapper.style.display = 'flex';
+                    contentWrapper.style.justifyContent = 'center';
+                    contentWrapper.style.alignItems = 'flex-start';
+                    contentWrapper.style.gap = '0px'; // 移除间距，让页面边缘相连
+                    contentWrapper.style.padding = '20px';
+                    contentWrapper.style.flexWrap = 'nowrap';
+                    
+                    // 计算要显示的页面范围（总是显示2页）
+                    const pagesToShow = [];
+                    pagesToShow.push(currentPage);
+                    if (currentPage < pdf.numPages) {
+                        pagesToShow.push(currentPage + 1);
+                    } else if (currentPage > 1) {
+                        // 如果是最后一页，显示前一页和当前页
+                        pagesToShow.unshift(currentPage - 1);
+                    }
+
+                    // 渲染选中的页面
+                    for (const pageNum of pagesToShow) {
+                        console.log(`渲染页面 ${pageNum}`);
+                        const page = await pdf.getPage(pageNum);
+                        // 保持较高的渲染分辨率，确保清晰度
+                        const baseScale = 2.0; // 基础渲染分辨率
+                        const viewport = page.getViewport({ scale: baseScale * currentScale });
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
+                        canvas.width = viewport.width;
+                        canvas.height = viewport.height;
+                        canvas.className = 'pdf-page';
+                        // 使用固定像素宽度，确保内容能正确滚动
+                        canvas.style.width = `${viewport.width / baseScale}px`;
+                        canvas.style.height = `${viewport.height / baseScale}px`;
+                        canvas.style.boxShadow = pageNum === currentPage ? '0 4px 12px rgba(64, 150, 255, 0.3)' : '0 2px 8px rgba(0,0,0,0.1)';
+                        canvas.style.opacity = pageNum === currentPage ? '1' : '0.9';
+                        canvas.style.borderRadius = '0px'; // 移除圆角，让页面边缘相连
+                        canvas.style.border = '1px solid #e0e0e0';
+                        canvas.style.borderRight = pageNum === pagesToShow[0] ? 'none' : '1px solid #e0e0e0';
+
+                        // 使用更优化的渲染配置，确保清晰度
+                        await page.render({
+                            canvasContext: ctx,
+                            viewport,
+                            enableWebGL: true,
+                            renderInteractiveForms: true,
+                            // 增加渲染质量设置
+                            quality: 1.0,
+                            alpha: false
+                        }).promise;
+                        
+                        contentWrapper.appendChild(canvas);
+                    }
+                    
+                    // 将内容容器添加到PDF容器中
+                    elements.pdfContainer.appendChild(contentWrapper);
+
+                    // 更新页码显示
+                    updatePageIndicator(currentPage, pdf.numPages, 'pdf');
+                }
+
+                        // 翻页函数
+                function goToPage(pageNum) {
+                    if (pageNum < 1) pageNum = 1;
+                    if (pageNum > pdf.numPages) pageNum = pdf.numPages;
+                    currentPage = pageNum;
+                    
+                    // 保存阅读进度，包含总页数信息
+                    const progressKey = `reading_progress_${fileName}_${file.size}_${file.lastModified}`;
+                    localStorage.setItem(progressKey, JSON.stringify({ 
+                        currentPage, 
+                        totalPages: pdf.numPages 
+                    }));
+                    
+                    renderPages();
+                }
+
+                // 绑定键盘事件
+                function handleKeyPress(e) {
+                    if (e.key === 'ArrowLeft') {
+                        e.preventDefault();
+                        // 向左翻页时，当前页减2（如果当前页大于2），否则减1
+                        const newPage = currentPage > 2 ? currentPage - 2 : 1;
+                        goToPage(newPage);
+                        console.log('向左翻页，当前页:', newPage);
+                    } else if (e.key === 'ArrowRight') {
+                        e.preventDefault();
+                        // 向右翻页时，当前页加2（如果当前页小于总页数-1），否则加1
+                        const newPage = currentPage < pdf.numPages - 1 ? currentPage + 2 : pdf.numPages;
+                        goToPage(newPage);
+                        console.log('向右翻页，当前页:', newPage);
+                    } else if (e.key === '+' || e.key === '=') {
+                        e.preventDefault();
+                        // 放大
+                        if (currentScale < 3.0) {
+                            currentScale += 0.2;
+                            renderPages();
+                            console.log('放大，当前缩放级别:', currentScale);
+                        }
+                    } else if (e.key === '-' || e.key === '_') {
+                        e.preventDefault();
+                        // 缩小
+                        if (currentScale > 0.5) {
+                            currentScale -= 0.2;
+                            renderPages();
+                            console.log('缩小，当前缩放级别:', currentScale);
+                        }
+                    } else if (e.key === '0') {
+                        e.preventDefault();
+                        // 重置缩放
+                        currentScale = 1.0;
+                        renderPages();
+                        console.log('重置缩放，当前缩放级别:', currentScale);
+                    }
+                }
+
+                // 添加键盘事件监听器
+                document.addEventListener('keydown', handleKeyPress);
+                state.keyPressHandler = handleKeyPress;
+
+                // 添加手指缩放支持
+                let startDistance = 0;
+                let startScale = 1.0;
+                
+                elements.pdfContainer.addEventListener('touchstart', (e) => {
+                    if (e.touches.length === 2) {
+                        // 计算两指之间的初始距离
+                        const touch1 = e.touches[0];
+                        const touch2 = e.touches[1];
+                        startDistance = Math.sqrt(
+                            Math.pow(touch2.clientX - touch1.clientX, 2) +
+                            Math.pow(touch2.clientY - touch1.clientY, 2)
+                        );
+                        startScale = currentScale;
+                    }
+                });
+                
+                elements.pdfContainer.addEventListener('touchmove', (e) => {
+                    if (e.touches.length === 2) {
+                        e.preventDefault();
+                        // 计算两指之间的当前距离
+                        const touch1 = e.touches[0];
+                        const touch2 = e.touches[1];
+                        const currentDistance = Math.sqrt(
+                            Math.pow(touch2.clientX - touch1.clientX, 2) +
+                            Math.pow(touch2.clientY - touch1.clientY, 2)
+                        );
+                        
+                        // 计算缩放比例
+                        const scaleFactor = currentDistance / startDistance;
+                        const newScale = startScale * scaleFactor;
+                        
+                        // 限制缩放范围
+                        if (newScale >= 0.5 && newScale <= 3.0) {
+                            currentScale = newScale;
+                            renderPages();
+                        }
+                    }
+                });
+
+                // 初始化渲染
+                await renderPages();
 
                 console.log('PDF文件渲染完成');
             } catch (err) {
@@ -952,21 +1432,15 @@
                 }
                 console.log('EPUB.js库加载成功');
 
-                // 创建EPUB容器 - 调整样式以确保内容可见
-                const epubView = document.createElement('div');
-                epubView.id = 'epub-content';
-                epubView.style.width = '100%';
-                epubView.style.height = '100%';
-                epubView.style.overflow = 'auto';
-                epubView.style.backgroundColor = '#fff';
-                epubView.style.padding = '20px';
-                epubView.style.boxSizing = 'border-box';
-                
-                // 清空容器并添加新的渲染容器
-                elements.epubContainer.innerHTML = '';
-                elements.epubContainer.appendChild(epubView);
-
-                console.log('EPUB容器创建成功，尺寸:', epubView.offsetWidth, 'x', epubView.offsetHeight);
+                // 检查并移除已存在的目录面板（包括PDF的目录面板）
+                const existingEpubTocPanel = document.getElementById('epub-toc-panel');
+                if (existingEpubTocPanel) {
+                    existingEpubTocPanel.remove();
+                }
+                const existingPdfTocPanel = document.getElementById('pdf-toc-panel');
+                if (existingPdfTocPanel) {
+                    existingPdfTocPanel.remove();
+                }
 
                 // 直接从File对象读取数据，不使用临时URL
                 console.log('开始读取EPUB文件:', fileName);
@@ -986,25 +1460,235 @@
                     
                     console.log('渲染尺寸:', screenWidth, 'x', screenHeight);
                     
+                    // 创建阅读内容区域，包含目录面板和EPUB容器
+                    const readerContent = document.createElement('div');
+                    readerContent.style.display = 'flex';
+                    readerContent.style.width = '100%';
+                    readerContent.style.height = '100%';
+                    readerContent.style.overflow = 'hidden';
+                    
+                    // 清空容器并添加新的阅读内容区域
+                    elements.epubContainer.innerHTML = '';
+                    elements.epubContainer.appendChild(readerContent);
+                    
+                    // 创建EPUB容器 - 调整样式以确保内容可见
+                    const epubView = document.createElement('div');
+                    epubView.id = 'epub-content';
+                    epubView.style.width = '100%';
+                    epubView.style.height = '100%';
+                    epubView.style.overflow = 'auto';
+                    epubView.style.backgroundColor = '#f5f7fa';
+                    epubView.style.boxSizing = 'border-box';
+                    epubView.style.display = 'flex';
+                    epubView.style.justifyContent = 'center';
+                    epubView.style.alignItems = 'flex-start';
+                    epubView.style.padding = '20px';
+                    epubView.style.gap = '0px';
+                    epubView.style.flexWrap = 'nowrap';
+                    epubView.style.overflowX = 'auto';
+                    
+                    // 初始化目录数据
+                    let epubToc = [];
+                    
+                    // 获取EPUB目录
+                    try {
+                        await book.loaded.navigation;
+                        epubToc = book.navigation.toc;
+                        console.log('EPUB目录获取成功，条目数:', epubToc.length);
+                        
+                        // 缓存目录信息到localStorage
+                        const outlineKey = `epub_outline_${fileName}_${file.size}_${file.lastModified}`;
+                        // 转换目录数据为可序列化格式
+                        const serializableOutline = JSON.parse(JSON.stringify(epubToc));
+                        localStorage.setItem(outlineKey, JSON.stringify(serializableOutline));
+                    } catch (err) {
+                        console.log('EPUB无目录或获取目录失败:', err);
+                        epubToc = [];
+                    }
+                    
+                    // 如果有目录，创建目录面板
+                    if (epubToc.length > 0) {
+                        // 创建目录面板
+                        const tocPanel = document.createElement('div');
+                        tocPanel.id = 'epub-toc-panel';
+                        tocPanel.style.width = '250px';
+                        tocPanel.style.height = '100%';
+                        tocPanel.style.backgroundColor = '#f5f7fa';
+                        tocPanel.style.borderRight = '1px solid #e4e7ed';
+                        tocPanel.style.padding = '15px';
+                        tocPanel.style.overflowY = 'auto';
+                        tocPanel.style.boxSizing = 'border-box';
+                        
+                        // 添加目录标题
+                        const tocTitle = document.createElement('div');
+                        tocTitle.textContent = '目录';
+                        tocTitle.style.fontSize = '16px';
+                        tocTitle.style.fontWeight = 'bold';
+                        tocTitle.style.marginBottom = '15px';
+                        tocTitle.style.color = '#303133';
+                        tocPanel.appendChild(tocTitle);
+                        
+                        // 渲染目录函数
+                        function renderTOC(toc, container, level = 0) {
+                            const ul = document.createElement('ul');
+                            ul.style.listStyle = 'none';
+                            ul.style.padding = '0';
+                            ul.style.margin = '0';
+                            ul.style.marginLeft = `${level * 15}px`;
+                            
+                            toc.forEach(item => {
+                                const li = document.createElement('li');
+                                li.style.marginBottom = '8px';
+                                
+                                const tocItem = document.createElement('div');
+                                tocItem.textContent = item.label;
+                                tocItem.style.padding = '6px 10px';
+                                tocItem.style.borderRadius = '4px';
+                                tocItem.style.cursor = 'pointer';
+                                tocItem.style.fontSize = level === 0 ? '14px' : '13px';
+                                tocItem.style.color = '#409eff';
+                                tocItem.style.whiteSpace = 'nowrap';
+                                tocItem.style.overflow = 'hidden';
+                                tocItem.style.textOverflow = 'ellipsis';
+                                
+                                // 添加悬停效果
+                                tocItem.addEventListener('mouseover', () => {
+                                    tocItem.style.backgroundColor = '#ecf5ff';
+                                });
+                                tocItem.addEventListener('mouseout', () => {
+                                    tocItem.style.backgroundColor = 'transparent';
+                                });
+                                
+                                // 目录项点击事件
+                                tocItem.addEventListener('click', async (e) => {
+                                    e.stopPropagation();
+                                    // 跳转到对应章节
+                                    if (item.href) {
+                                        try {
+                                            console.log('目录项点击:', item.label, '目标:', item.href);
+                                            await rendition.display(item.href);
+                                            
+                                            // 更新当前章节
+                                            const chapterIndex = epubToc.findIndex(ch => ch.href === item.href);
+                                            if (chapterIndex >= 0) {
+                                                currentChapter = chapterIndex + 1;
+                                                updateEpubPageInfo();
+                                                
+                                                // 保存阅读进度
+                                                const progressKey = `reading_progress_${fileName}_${file.size}_${file.lastModified}`;
+                                                localStorage.setItem(progressKey, JSON.stringify({ currentChapter, totalChapters }));
+                                            }
+                                        } catch (err) {
+                                            console.error('目录跳转失败:', err);
+                                        }
+                                    }
+                                });
+                                
+                                li.appendChild(tocItem);
+                                
+                                // 渲染子目录
+                                if (item.subitems && item.subitems.length > 0) {
+                                    // 添加展开/折叠按钮
+                                    const toggleBtn = document.createElement('span');
+                                    toggleBtn.style.display = 'inline-block';
+                                    toggleBtn.style.width = '16px';
+                                    toggleBtn.style.height = '16px';
+                                    toggleBtn.style.textAlign = 'center';
+                                    toggleBtn.style.marginRight = '5px';
+                                    toggleBtn.style.fontSize = '12px';
+                                    toggleBtn.textContent = '▶';
+                                    toggleBtn.style.transform = 'rotate(0deg)';
+                                    toggleBtn.style.transition = 'transform 0.2s ease';
+                                    
+                                    tocItem.insertBefore(toggleBtn, tocItem.firstChild);
+                                    
+                                    // 创建子目录容器
+                                    const subContainer = document.createElement('div');
+                                    subContainer.style.display = 'none';
+                                    li.appendChild(subContainer);
+                                    
+                                    // 为展开/折叠按钮添加单独的点击事件
+                                    toggleBtn.addEventListener('click', (e) => {
+                                        e.stopPropagation();
+                                        if (subContainer.style.display === 'none') {
+                                            subContainer.style.display = 'block';
+                                            toggleBtn.style.transform = 'rotate(90deg)';
+                                            // 渲染子目录
+                                            renderTOC(item.subitems, subContainer, level + 1);
+                                        } else {
+                                            subContainer.style.display = 'none';
+                                            toggleBtn.style.transform = 'rotate(0deg)';
+                                        }
+                                    });
+                                }
+                                
+                                ul.appendChild(li);
+                            });
+                            
+                            container.appendChild(ul);
+                        }
+                        
+                        // 渲染目录
+                        renderTOC(epubToc, tocPanel);
+                        
+                        // 插入目录面板到阅读内容区域
+                        readerContent.appendChild(tocPanel);
+                    }
+                    
+                    // 添加EPUB容器到阅读内容区域
+                    readerContent.appendChild(epubView);
+
+                    console.log('EPUB容器创建成功，尺寸:', epubView.offsetWidth, 'x', epubView.offsetHeight);
+                    
                     const rendition = book.renderTo(epubView, {
-                        width: screenWidth,
-                        height: screenHeight,
+                        width: epubView.offsetWidth,
+                        height: epubView.offsetHeight,
                         flow: 'paginated',
                         spread: 'always', // 始终双面展示
                         method: 'default'
                     });
                     console.log('渲染实例创建成功');
+
+                    // 获取总章节数
+                    let totalChapters = epubToc.length;
+                    console.log('EPUB总章节数:', totalChapters);
+
+                    // 获取阅读进度
+                    const progressKey = `reading_progress_${fileName}_${file.size}_${file.lastModified}`;
+                    const savedProgress = JSON.parse(localStorage.getItem(progressKey) || '{"currentChapter": 1}');
+                    let currentChapter = savedProgress.currentChapter || 1;
+
+                    // 更新页码显示
+                    function updateEpubPageInfo() {
+                        if (totalChapters > 0) {
+                            updatePageIndicator(currentChapter, totalChapters, 'epub');
+                        }
+                    }
                     
-                    // 绑定键盘事件进行翻页
+                    // 绑定键盘事件进行翻页和缩放
                     function handleKeyPress(e) {
                         if (e.key === 'ArrowLeft') {
                             e.preventDefault();
                             rendition.prev();
-                            console.log('向左翻页');
+                            if (currentChapter > 1) {
+                                currentChapter--;
+                                updateEpubPageInfo();
+                                // 保存阅读进度
+                                const progressKey = `reading_progress_${fileName}_${file.size}_${file.lastModified}`;
+                                localStorage.setItem(progressKey, JSON.stringify({ currentChapter, totalChapters }));
+                            }
+                            console.log('向左翻页，当前章节:', currentChapter);
                         } else if (e.key === 'ArrowRight') {
                             e.preventDefault();
                             rendition.next();
-                            console.log('向右翻页');
+                            if (currentChapter < totalChapters) {
+                                currentChapter++;
+                                updateEpubPageInfo();
+                                // 保存阅读进度
+                                const progressKey = `reading_progress_${fileName}_${file.size}_${file.lastModified}`;
+                                localStorage.setItem(progressKey, JSON.stringify({ currentChapter, totalChapters }));
+                            }
+                            console.log('向右翻页，当前章节:', currentChapter);
                         }
                     }
                     
@@ -1020,6 +1704,7 @@
                     console.log('开始渲染第一页...');
                     rendition.display().then(function() {
                         console.log('第一页渲染成功');
+                        updateEpubPageInfo();
                     }).catch(function(error) {
                         console.error('渲染失败:', error);
                     });
@@ -1061,6 +1746,27 @@
         }
 
         function getFileTypeName(fileTypeOrName) {
+            // 处理MIME类型
+            if (fileTypeOrName.includes('/')) {
+                const mimeMap = {
+                    'application/pdf': 'PDF文档',
+                    'application/epub+zip': 'EPUB电子书',
+                    'text/plain': '文本文档',
+                    'application/msword': 'Word文档',
+                    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'Word文档',
+                    'application/vnd.ms-excel': 'Excel表格',
+                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'Excel表格',
+                    'application/vnd.ms-powerpoint': 'PPT演示文稿',
+                    'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'PPT演示文稿',
+                    'image/jpeg': '图片文件',
+                    'image/png': '图片文件'
+                };
+                if (mimeMap[fileTypeOrName]) {
+                    return mimeMap[fileTypeOrName];
+                }
+            }
+            
+            // 从文件名获取扩展名
             const ext = fileTypeOrName.split('.').pop().toLowerCase();
             const typeMap = {
                 pdf: 'PDF文档',
@@ -1099,6 +1805,32 @@
         function hideEmptyState() {
             elements.emptyState.style.display = 'none';
             elements.fileGrid.style.display = 'grid';
+        }
+
+        // 更新页码显示
+        function updatePageIndicator(currentPage, totalPages, type) {
+            if (!elements.readerPageInfo) return;
+            
+            const percentage = Math.round((currentPage / totalPages) * 100);
+            elements.readerPageInfo.textContent = `${currentPage} / ${totalPages} (${percentage}%)`;
+        }
+
+        // 获取阅读进度
+        function getReadingProgress(fileName, fileSize, lastModified) {
+            const progressKey = `reading_progress_${fileName}_${fileSize}_${lastModified}`;
+            return JSON.parse(localStorage.getItem(progressKey) || 'null');
+        }
+
+        // 保存阅读进度
+        function saveReadingProgress(fileName, fileSize, lastModified, currentPage, totalPages) {
+            const progressKey = `reading_progress_${fileName}_${fileSize}_${lastModified}`;
+            const progressData = {
+                currentPage,
+                totalPages,
+                percentage: Math.round((currentPage / totalPages) * 100),
+                lastRead: Date.now()
+            };
+            localStorage.setItem(progressKey, JSON.stringify(progressData));
         }
     </script>
 </body>
