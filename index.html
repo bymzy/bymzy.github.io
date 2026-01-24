@@ -603,7 +603,10 @@
             dirTree: [],
             importedFiles: [],
             fileCache: new Map(),
-            db: null
+            db: null,
+            // 当前阅读文件信息，用于返回时更新进度
+            currentReadingFile: null,
+            currentReadingFileName: null
         }
 
         const elements = {
@@ -746,7 +749,7 @@
             elements.fileInput.addEventListener('change', handleFileImport);
 
             // 阅读视图返回按钮事件
-            elements.readerBackBtn.addEventListener('click', () => {
+            elements.readerBackBtn.addEventListener('click', async () => {
                 // 移除键盘事件监听器
                 if (state.keyPressHandler) {
                     document.removeEventListener('keydown', state.keyPressHandler);
@@ -773,6 +776,24 @@
                 elements.readerView.style.display = 'none';
                 elements.pdfContainer.innerHTML = '';
                 elements.epubContainer.innerHTML = '';
+                
+                // 如果有当前阅读文件，更新其在卡片上的显示
+                if (state.currentReadingFile && state.currentReadingFileName) {
+                    console.log('更新阅读文件卡片显示:', state.currentReadingFileName);
+                    
+                    // 根据当前模式重新渲染文件列表
+                    if (state.currentMode === 'import') {
+                        // 重新渲染导入文件列表，以更新阅读进度
+                        renderImportedFiles();
+                    } else if (state.currentMode === 'directory' && state.currentDirHandle) {
+                        // 重新渲染当前目录内容
+                        await renderDirectoryContent(state.currentDirHandle, state.currentDirPath);
+                    }
+                    
+                    // 清除当前阅读文件信息
+                    state.currentReadingFile = null;
+                    state.currentReadingFileName = null;
+                }
             });
             
             // 初始化 IndexedDB
@@ -1311,6 +1332,10 @@
 
         // 打开PDF阅读器 - 翻页模式
         async function openPdfReader(file, fileName) {
+            // 保存当前阅读文件信息
+            state.currentReadingFile = file;
+            state.currentReadingFileName = fileName;
+            
             // 显示阅读视图
             elements.readerView.style.display = 'flex';
             elements.readerTitle.textContent = fileName;
@@ -1670,6 +1695,10 @@
 
         // 打开EPUB阅读器
         async function openEpubReader(file, fileName) {
+            // 保存当前阅读文件信息
+            state.currentReadingFile = file;
+            state.currentReadingFileName = fileName;
+            
             // 显示阅读视图
             elements.readerView.style.display = 'flex';
             elements.readerTitle.textContent = fileName;
