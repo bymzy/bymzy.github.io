@@ -628,8 +628,108 @@
 
         init();
 
+        // 初始化拖拽导入功能
+        function initDragAndDrop() {
+            const contentArea = document.querySelector('.content-area');
+            
+            // 添加拖拽样式
+            const dragStyle = `
+                .content-area.drag-over {
+                    border: 2px dashed #4096ff !important;
+                    background-color: rgba(64, 150, 255, 0.1) !important;
+                    border-radius: 8px !important;
+                }
+            `;
+            
+            // 添加样式到页面
+            const styleSheet = document.createElement('style');
+            styleSheet.textContent = dragStyle;
+            document.head.appendChild(styleSheet);
+            
+            // 拖拽事件处理
+            contentArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                contentArea.classList.add('drag-over');
+            });
+            
+            contentArea.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                // 检查鼠标是否真的离开区域
+                const rect = contentArea.getBoundingClientRect();
+                if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
+                    contentArea.classList.remove('drag-over');
+                }
+            });
+            
+            contentArea.addEventListener('drop', async (e) => {
+                e.preventDefault();
+                contentArea.classList.remove('drag-over');
+                
+                const files = Array.from(e.dataTransfer.files);
+                if (files.length > 0) {
+                    // 处理拖拽的文件
+                    await handleDroppedFiles(files);
+                }
+            });
+        }
+        
+        // 处理拖拽的文件
+        async function handleDroppedFiles(files) {
+            let importedCount = 0;
+            let totalFiles = 0;
+            
+            for (const file of files) {
+                if (isSupportedFile(file.name)) {
+                    totalFiles++;
+                    
+                    const isDuplicate = state.importedFiles.some(
+                        f => f.name === file.name && f.size === file.size && f.lastModified === file.lastModified
+                    );
+                    
+                    if (!isDuplicate) {
+                        try {
+                            const arrayBuffer = await readFileAsArrayBuffer(file);
+                            const fileObj = {
+                                name: file.name,
+                                size: file.size,
+                                type: file.type,
+                                lastModified: file.lastModified,
+                                data: arrayBuffer
+                            };
+                            
+                            // 保存到 IndexedDB
+                            await saveFileToIndexedDB(fileObj);
+                            
+                            importedCount++;
+                        } catch (error) {
+                            console.error(`导入文件 ${file.name} 失败:`, error);
+                            alert(`导入文件 ${file.name} 失败: ${error.message}`);
+                        }
+                    }
+                }
+            }
+            
+            // 更新内存中的文件列表
+            state.importedFiles = await getAllImportedFiles();
+            
+            // 重新渲染导入文件列表
+            if (state.currentMode === 'import') {
+                renderImportedFiles();
+            }
+            
+            // 显示导入结果
+            if (importedCount > 0) {
+                alert(`成功导入 ${importedCount} 个文件${totalFiles > importedCount ? `（${totalFiles - importedCount} 个文件已存在）` : ''}`);
+            } else if (totalFiles > 0) {
+                alert('所有文件已存在');
+            }
+        }
+        
         async function init() {
             createFileInput();
+            
+            // 初始化拖拽导入功能
+            initDragAndDrop();
             
             elements.navTabs.forEach(tab => {
                 tab.addEventListener('click', switchMode);
